@@ -410,6 +410,49 @@ function storage.check_compaction()
     end
 end
 
+function storage.search(query, max_results)
+    if not query or query == "" then return {} end
+    query = query:lower()
+    max_results = max_results or 50
+
+    local terms = {}
+    for word in query:gmatch("%S+") do
+        table.insert(terms, word)
+    end
+    if #terms == 0 then return {} end
+
+    local items = {}
+    local seen = {}
+
+    reverse_scan_lines(8192, function(line)
+        local ok_json, entry = pcall(utils.parse_json, line)
+        if ok_json and type(entry) == "table" and entry.path then
+            if not seen[entry.path] then
+                seen[entry.path] = true
+                if not entry.deleted then
+                    local title = (entry.title or get_filename(entry.path)):lower()
+                    local path = entry.path:lower()
+                    local matched = true
+                    for _, term in ipairs(terms) do
+                        if not title:find(term, 1, true) and not path:find(term, 1, true) then
+                            matched = false
+                            break
+                        end
+                    end
+                    if matched then
+                        table.insert(items, entry)
+                        if #items >= max_results then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    return items
+end
+
 
 -- ============================================================================
 -- Playback Tracking
@@ -786,15 +829,26 @@ local function vanilla_render()
             local title_color = is_selected and "{\\c&HFFFFFF&\\b1}" or "{\\c&HD0D0D0&\\b0}"
 
             local exists = file_exists(item.path)
-            local pos_str = format_duration(item.pos or 0)
-            local dur_str = format_duration(item.duration or 0)
+            local pos = tonumber(item.pos) or 0
+            local dur = tonumber(item.duration) or 0
+            local pos_str = format_duration(pos)
+            local dur_str = format_duration(dur)
             local rel_time = format_relative_time(item.time, now)
 
             if not exists then
                 title = string.format("{\\s1}%s{\\s0} {\\c&HFF6666&}[Deleted or Moved]", title)
                 title_color = "{\\c&H888888&}"
             end
-            local meta = string.format("{\\c&H999999&\\fs14}  [%s / %s]  •  %s", pos_str, dur_str, rel_time)
+
+            local meta
+            if not exists then
+                meta = string.format("{\\c&H999999&\\fs14}  •  %s", rel_time)
+            elseif dur > 0 then
+                local percent = math.min(100, math.floor((pos / dur) * 100))
+                meta = string.format("{\\c&H999999&\\fs14}  [%s / %s (%d%%)]  •  %s", pos_str, dur_str, percent, rel_time)
+            else
+                meta = string.format("{\\c&H999999&\\fs14}  [%s]  •  %s", pos_str, rel_time)
+            end
 
             table.insert(lines, string.format("%s%s%s%s\\N", prefix, title_color, title, meta))
         end
@@ -912,14 +966,84 @@ end
 
 local uosc_menu = {
     current_page = 1,
+    search_query = nil,
 }
 
-local function uosc_build_menu(page_num)
+local function uosc_build_item(item, now)
+    local title = item.title or get_filename(item.path)
+    local exists = file_exists(item.path)
+    local pos = tonumber(item.pos) or 0
+    local dur = tonumber(item.duration) or 0
+    local pos_str = format_duration(pos)
+    local dur_str = format_duration(dur)
+    local rel_time = format_relative_time(item.time, now)
+
+    local display_title = exists and title or strikethrough(title)
+    local hint_str
+    if not exists then
+        hint_str = string.format("[Deleted or Moved]  •  %s", rel_time)
+    elseif dur > 0 then
+        local percent = math.min(100, math.floor((pos / dur) * 100))
+        hint_str = string.format("%s / %s (%d%%)  •  %s", pos_str, dur_str, percent, rel_time)
+    else
+        hint_str = string.format("%s  •  %s", pos_str, rel_time)
+    end
+
+    return {
+        title = display_title,
+        hint = hint_str,
+        icon = exists and "history" or "error",
+        muted = not exists,
+        value = {
+            action = "play",
+            path = item.path,
+            pos = pos,
+            duration = dur,
+            missing = not exists,
+        },
+        actions = {
+            {
+                name = "delete",
+                icon = "delete",
+                label = "Delete from history",
+            },
+        },
+    }
+end
+
+local function uosc_build_menu(page_num, query)
+    local now = os.time()
+    local menu_items = {}
+
+    if query and query ~= "" then
+        local results = storage.search(query, 50)
+        if #results == 0 then
+            table.insert(menu_items, {
+                title = string.format("No history found matching \"%s\"", query),
+                italic = true,
+                align = "center",
+                selectable = false,
+            })
+        else
+            for _, item in ipairs(results) do
+                table.insert(menu_items, uosc_build_item(item, now))
+            end
+        end
+
+        return {
+            type = "janus_history",
+            title = string.format("Search: %s (%d matches)", query, #results),
+            callback = {"janus", "uosc-event"},
+            on_search = {"janus", "uosc-search"},
+            search_debounce = 200,
+            items = menu_items,
+        }
+    end
+
+    page_num = page_num or uosc_menu.current_page or 1
     uosc_menu.current_page = page_num
     local page_data = storage.get_page(page_num)
     local items = page_data.items
-    local now = os.time()
-    local menu_items = {}
 
     if #items == 0 then
         table.insert(menu_items, {
@@ -930,36 +1054,7 @@ local function uosc_build_menu(page_num)
         })
     else
         for _, item in ipairs(items) do
-            local title = item.title or get_filename(item.path)
-            local exists = file_exists(item.path)
-            local pos_str = format_duration(item.pos or 0)
-            local dur_str = format_duration(item.duration or 0)
-            local rel_time = format_relative_time(item.time, now)
-
-            local display_title = exists and title or strikethrough(title)
-            local hint_str = exists
-                and string.format("%s / %s  •  %s", pos_str, dur_str, rel_time)
-                or string.format("[Deleted or Moved]  •  %s", rel_time)
-            table.insert(menu_items, {
-                title = display_title,
-                hint = hint_str,
-                icon = exists and "history" or "error",
-                muted = not exists,
-                value = {
-                    action = "play",
-                    path = item.path,
-                    pos = tonumber(item.pos) or 0,
-                    duration = tonumber(item.duration) or 0,
-                    missing = not exists,
-                },
-                actions = {
-                    {
-                        name = "delete",
-                        icon = "delete",
-                        label = "Delete from history",
-                    },
-                },
-            })
+            table.insert(menu_items, uosc_build_item(item, now))
         end
     end
 
@@ -995,6 +1090,8 @@ local function uosc_build_menu(page_num)
         type = "janus_history",
         title = string.format("History — Page %d", page_num),
         callback = {"janus", "uosc-event"},
+        on_search = {"janus", "uosc-search"},
+        search_debounce = 200,
         items = menu_items,
     }
 end
@@ -1002,6 +1099,7 @@ end
 function uosc_menu.open(page_num)
     page_num = page_num or 1
     uosc_menu.current_page = page_num
+    uosc_menu.search_query = nil
     local json = utils.format_json(uosc_build_menu(page_num))
     mp.commandv("script-message-to", "uosc", "open-menu", json)
 end
@@ -1009,7 +1107,7 @@ end
 function uosc_menu.update(page_num)
     page_num = page_num or uosc_menu.current_page or 1
     uosc_menu.current_page = page_num
-    local json = utils.format_json(uosc_build_menu(page_num))
+    local json = utils.format_json(uosc_build_menu(page_num, uosc_menu.search_query))
     mp.commandv("script-message-to", "uosc", "update-menu", json)
 end
 
@@ -1405,10 +1503,16 @@ mp.register_script_message("uosc-event", function(json_str)
         if path then
             storage.remove(path)
             msg.info("Janus: removed from history: " .. path)
-            uosc_menu.update(uosc_menu.current_page or 1)
+            if uosc_menu.search_query and uosc_menu.search_query ~= "" then
+                local json = utils.format_json(uosc_build_menu(nil, uosc_menu.search_query))
+                mp.commandv("script-message-to", "uosc", "update-menu", json)
+            else
+                uosc_menu.update(uosc_menu.current_page or 1)
+            end
         end
     elseif val and type(val) == "table" then
         if val.action == "page" then
+            uosc_menu.search_query = nil
             uosc_menu.update(val.page)
         elseif val.action == "play" then
             if val.missing or (not is_url(val.path) and not file_exists(val.path)) then
@@ -1422,6 +1526,18 @@ mp.register_script_message("uosc-event", function(json_str)
                 duration = val.duration,
             })
         end
+    end
+end)
+
+mp.register_script_message("uosc-search", function(query)
+    query = query or ""
+    if query:match("^%s*$") then
+        uosc_menu.search_query = nil
+        uosc_menu.update(uosc_menu.current_page or 1)
+    else
+        uosc_menu.search_query = query
+        local json = utils.format_json(uosc_build_menu(nil, query))
+        mp.commandv("script-message-to", "uosc", "update-menu", json)
     end
 end)
 

@@ -26,7 +26,9 @@ The name fits the script's core features:
 - **Seek undo & redo (`Ctrl+Z` / `Ctrl+X`)**: Ever fat-finger an arrow key or jump to the wrong chapter and completely lose your spot? `Ctrl+Z` takes you right back to where you jumped from. If you tapped an arrow key several times in a row, Janus groups them into a single jump so you only have to hit undo once.
 - **Hold to speed up (2.0x)**: Hold `Space` or `Right-Click` to temporarily cruise through slow scenes at 2x speed. Releasing it drops right back to normal speed, while a quick tap simply plays or pauses. You can also toggle 2x anytime with `Alt+n`.
 - **Dead file detection**: If a video in your history was moved, deleted, or sits on an unplugged drive, Janus strikes through the title (`[Deleted or Moved]`) so you know what happened instead of failing silently.
-- **uosc & vanilla OSD support**: Automatically detects if you use uosc and renders a native menu with hover-to-delete. On standard mpv, it opens a clean on-screen display with arrow key navigation and pagination.
+- **uosc & vanilla OSD support**: Automatically detects if you use uosc and renders a native menu with hover-to-delete and live full-history search. On standard mpv, it opens a clean on-screen display with arrow key navigation and pagination.
+- **Progress percentage**: Every entry shows your exact timestamp, total duration, percent watched, and how long ago you watched it (e.g. `14:20 / 28:00 (51%) • 2h ago`).
+- **Full-history search (uosc)**: Start typing inside the history menu to instantly search through your entire history log across all past videos (not just the current page).
 - **Folder blacklist**: Ignore folders you don't want tracked (like downloads, temp directories, or private folders).
 - **Distraction-free OSD**: Frequent playback actions (speeding up, undoing seeks) use small, quiet HUD icons (`⏩`, `↩`) so they don't block the video. Script warnings and status changes use `Janus:` so you know where they came from.
 
