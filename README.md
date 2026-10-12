@@ -6,6 +6,14 @@ It keeps track of recently watched videos, lets you resume where you left off, a
 
 ---
 
+## Why Janus?
+
+In Roman mythology, **Janus** is the god of beginnings, transitions, and time—traditionally depicted with two faces: one looking back into the past, and one looking forward into the future.
+
+The plugin was built with that exact duality in mind: one face remembers where you've been (logging your playback history), while the other looks ahead to pick up right where you left off (smart resume).
+
+---
+
 ## Features
 
 - **Fast & Lightweight**: Keeps track of recently watched videos without slowing down mpv. It uses pagination so it only loads a small page of items at a time instead of reading your whole history into memory.
