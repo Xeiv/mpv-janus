@@ -1,3 +1,12 @@
+---@diagnostic disable: undefined-field, inject-field
+---@class Timer
+---@field kill fun(self: Timer)
+
+---@class OSDOverlay
+---@field data string
+---@field update fun(self: OSDOverlay)
+---@field remove fun(self: OSDOverlay)
+
 -- Janus: playback history, smart resume, speed hold, and seek undo/redo for mpv
 -- https://github.com/xeiv/mpv-janus
 
@@ -8,6 +17,9 @@ local opt = require("mp.options")
 local utils = require("mp.utils")
 
 
+-- ============================================================================
+-- Configuration & Options
+-- ============================================================================
 local config = {
     enabled = true,
 
@@ -56,6 +68,9 @@ local history_path = mp.command_native({"expand-path", config.history_file})
 local tracking_enabled = config.enabled
 
 
+-- ============================================================================
+-- Helpers
+-- ============================================================================
 local function format_duration(seconds)
     if not seconds or seconds < 0 or seconds ~= seconds then
         return "00:00"
@@ -166,6 +181,9 @@ local function toggle_tracking()
 end
 
 
+-- ============================================================================
+-- History Storage (JSON Lines)
+-- ============================================================================
 local storage = {
     append_count = 0,
 }
@@ -385,6 +403,9 @@ function storage.check_compaction()
 end
 
 
+-- ============================================================================
+-- Playback Tracking
+-- ============================================================================
 local tracker = {
     current = {
         path = nil,
@@ -514,6 +535,10 @@ local function tracker_on_tick()
 end
 
 
+-- ============================================================================
+-- Resume Prompt (uosc & Vanilla OSD)
+-- ============================================================================
+local speed_state, speed_deactivate
 local ui = { has_uosc = false } -- Forward declaration
 
 resume_prompter = {
@@ -707,6 +732,9 @@ function resume_prompter.cancel()
 end
 
 
+-- ============================================================================
+-- History Menus (uosc & Vanilla OSD)
+-- ============================================================================
 local vanilla_menu = {
     is_open = false,
     current_page = 1,
@@ -1006,6 +1034,10 @@ mp.register_script_message("uosc-version", function()
     ui.has_uosc = true
 end)
 
+-- ============================================================================
+-- mpv Events
+-- ============================================================================
+
 mp.register_event("file-loaded", function()
     seek_history_reset()
     local path = mp.get_property("path")
@@ -1066,7 +1098,10 @@ end)
 tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)
 
 
-local speed_state = {
+-- ============================================================================
+-- Hold to Speed Up (YouTube Style)
+-- ============================================================================
+speed_state = {
     is_speeding = false,
     was_paused = false,
     normal_speed = 1.0,
@@ -1100,7 +1135,7 @@ local function speed_activate(is_toggle)
     end
 end
 
-local function speed_deactivate()
+speed_deactivate = function()
     if speed_state.timer then
         speed_state.timer:kill()
         speed_state.timer = nil
@@ -1171,6 +1206,9 @@ local function toggle_speed()
 end
 
 
+-- ============================================================================
+-- Seek History (Undo / Redo)
+-- ============================================================================
 local seek_history = {
     stack = {},
     index = 0,
@@ -1314,6 +1352,9 @@ end)
 
 
 -- default keybindings
+-- ============================================================================
+-- Keybindings & Script Messages
+-- ============================================================================
 mp.add_key_binding("h", "open", function() ui.open() end)
 mp.add_key_binding("Alt+h", "toggle-tracking", toggle_tracking)
 if config.speed_enabled then
