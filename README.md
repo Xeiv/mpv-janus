@@ -1,185 +1,184 @@
-# Janus — History, Resume & Playback Controls for mpv
+# Janus
 
-**Janus** is a lightweight, modern playback history, smart resume, and speed-control plugin for [mpv](https://mpv.io).
+Playback history, smart resume, YouTube-style speed hold, and seek undo/redo for [mpv](https://mpv.io).
 
-It keeps track of recently watched videos, lets you resume where you left off, provides smooth YouTube-style hold-to-speed controls, and offers both native [uosc](https://github.com/darsain/uosc) menu integration and a clean built-in on-screen display for vanilla mpv setups.
+Works seamlessly with vanilla mpv out of the box, and automatically hooks into [uosc](https://github.com/darsain/uosc) if you have it installed.
 
 ---
 
 ## Why Janus?
 
-In Roman mythology, **Janus** is the god of beginnings, transitions, and time—traditionally depicted with two faces: one looking back into the past, and one looking forward into the future.
+In Roman mythology, **Janus** is the god of beginnings, transitions, and time—traditionally pictured with two faces: one looking back into the past, and one looking forward into the future.
 
-The plugin was built with that exact duality in mind:
-- **Looking back**: Remembering where you've been by quietly logging your playback history.
-- **Looking forward**: Picking up right where you left off with smart resume prompts and idle playback.
-- **Bending time**: Giving you effortless control over the flow of time itself—holding to speed through slow moments at 2x and instantly snapping back to normal the moment you let go.
+The name fits the script's core features:
+- **Looking back**: Remembering where you've been with watch history, and letting you undo accidental timeline jumps (`Ctrl+Z`).
+- **Looking forward**: Picking up right where you left off with smart resume prompts, launching your last video directly from an empty window, and redoing seeks (`Ctrl+X`).
+- **Bending time**: YouTube-style hold-to-speed (holding `Space` or `Right-Click` for 2x, releasing for 1x) with audio pitch correction kept intact.
 
 ---
 
-## Features
+## What It Does
 
-- **Fast & Lightweight**: Keeps track of recently watched videos without slowing down mpv. It uses pagination so it only loads a small page of items at a time instead of reading your whole history into memory.
-- **Resume Where You Left Off**: When you open a video you've watched before, Janus pops up a quick prompt asking if you want to resume where you left off or start from the beginning. If a video was finished or has no saved position, it starts normally from 0:00 without nagging.
-- **Resume Last Played on Idle**: When opening mpv with no file playing (idle window), pressing `Space` immediately opens and resumes your most recently played video.
-- **Seek Undo & Redo**: Accidentally jumped across the timeline or pressed the wrong arrow key? Press `Ctrl+z` to undo your seek and jump back, and `Ctrl+x` to redo.
-- **Smart 95% Completion Rule**: Automatically skips the resume prompt and restarts from the beginning if you previously finished the video or left during the end credits (configurable threshold and 95% rule).
-- **Hold to Speed Up (YouTube Style)**: Press and hold `Space` or `Right Click` to temporarily speed up playback to 2.0x with audio pitch correction kept intact. Releasing it smoothly restores normal speed, while a quick tap plays/pauses. You can also toggle 2.0x speed anytime with `Alt+n`.
-- **Missing & Deleted File Detection**: If a video in your history was moved, deleted, or is on an unmounted drive, Janus strikes through its title and marks it `[Deleted or Moved]`. Clicking it gives a clear on-screen notice instead of failing.
-- **Hover to Delete (uosc)**: In uosc, hover over any item in your history menu to reveal a delete button to remove it instantly.
-- **Folder Blacklist**: Exclude specific directories or temporary download folders from ever being saved to history.
-- **Toggle History Anytime**: Quickly turn history logging on or off on the fly by pressing `Alt+h`.
-- **Works with Vanilla mpv & uosc**: Automatically detects if you're using uosc and displays a native menu. If you're on standard mpv, it opens an on-screen menu with full keyboard controls.
-- **Smart History Tracking**: Ignores videos you open and quickly skip past (configurable, 5 seconds by default) so your history stays tidy.
-- **Replaying Bumps to the Top**: Whenever you rewatch a video, it smoothly updates your progress and moves it back to the top of the list.
+- **Watch history**: Keeps track of recent videos without hogging memory or slowing down startup. Replaying an old file updates your progress and bumps it to the top. Quick skips (under 5 seconds) are ignored so misclicks don't clutter your log.
+- **Smart resume**: Reopening an unfinished video brings up a quick prompt—hit `Enter` to resume, or `r` to start over. If you don't touch anything, it auto-resumes after 10 seconds.
+- **95% completion cutoff**: If you finished a video or quit during the credits (past 95%), Janus assumes you're done and starts fresh from 0:00 next time without nagging.
+- **Resume straight from idle**: Launch mpv without opening a file first? Hit `Space` on the empty window and it immediately loads and resumes whatever you were watching last.
+- **Seek undo & redo (`Ctrl+Z` / `Ctrl+X`)**: Ever fat-finger an arrow key or jump to the wrong chapter and completely lose your spot? `Ctrl+Z` takes you right back to where you jumped from. If you tapped an arrow key several times in a row, Janus groups them into a single jump so you only have to hit undo once.
+- **Hold to speed up (2.0x)**: Hold `Space` or `Right-Click` to temporarily cruise through slow scenes at 2x speed. Releasing it drops right back to normal speed, while a quick tap simply plays or pauses. You can also toggle 2x anytime with `Alt+n`.
+- **Dead file detection**: If a video in your history was moved, deleted, or sits on an unplugged drive, Janus strikes through the title (`[Deleted or Moved]`) so you know what happened instead of failing silently.
+- **uosc & vanilla OSD support**: Automatically detects if you use uosc and renders a native menu with hover-to-delete. On standard mpv, it opens a clean on-screen display with arrow key navigation and pagination.
+- **Folder blacklist**: Ignore folders you don't want tracked (like downloads, temp directories, or private folders).
+- **Distraction-free OSD**: Frequent playback actions (speeding up, undoing seeks) use small, quiet HUD icons (`⏩`, `↩`) so they don't block the video. Script warnings and status changes use `Janus:` so you know where they came from.
 
 ---
 
 ## Installation
 
-Janus is a single-file script, making installation effortless:
+Janus is a single-file script. No external dependencies needed.
 
-### 1. Install Plugin
-Drop `janus.lua` into your mpv `scripts` directory:
+### 1. Put `janus.lua` in your mpv scripts directory
 
 ```bash
 # Linux / macOS
 cp janus.lua ~/.config/mpv/scripts/
 
 # Windows
-# Copy janus.lua to: %APPDATA%/mpv/scripts/
+# Copy janus.lua to %APPDATA%/mpv/scripts/
 ```
 
-> **Tip**: If you have `save-position-on-quit=yes` in your `mpv.conf`, you can safely disable or remove it. Janus saves your playback progress continuously (every 15 seconds and on pause) and handles resume prompts without conflicts.
+> **Note**: If you have `save-position-on-quit=yes` in your `mpv.conf`, you can disable or remove it. Janus saves your position automatically (every 15s, on pause, and on quit) and manages resumes without fighting mpv's internal state.
 
-### 2. Configuration (Optional)
-If you want to customize settings, drop `janus.conf` into your `script-opts` directory:
+### 2. (Optional) Custom settings
+If you want to tweak defaults, copy `janus.conf` into your `script-opts` folder:
 
 ```bash
 # Linux / macOS
 cp janus.conf ~/.config/mpv/script-opts/
 
 # Windows
-# Copy janus.conf to: %APPDATA%/mpv/script-opts/
+# Copy janus.conf to %APPDATA%/mpv/script-opts/
 ```
 
 ---
 
-## Keybindings
+## Default Controls
 
-Janus provides built-in default shortcuts:
-- **`h`**: Open the Janus history menu
-- **`Alt+h`**: Toggle history tracking on or off
-- **`Ctrl+z`**: Undo seek (jump back to previous position)
-- **`Ctrl+x`**: Redo seek
-- **`Space`**: Tap to play/pause (or resume last video when idle), hold to speed up to 2.0x
-- **Right Click (`MBTN_RIGHT`)**: Tap to play/pause, hold to speed up to 2.0x
-- **`Alt+n`**: Toggle 2.0x speed on or off
+| Key | Binding | What it does |
+| :--- | :--- | :--- |
+| **`h`** | `janus/open` | Open history menu (auto-picks uosc or vanilla OSD) |
+| **`Alt+h`** | `janus/toggle-tracking` | Turn history logging on / off |
+| **`Ctrl+z`** | `janus/seek-undo` | Undo seek (jump back to where you were) |
+| **`Ctrl+x`** | `janus/seek-redo` | Redo seek |
+| **`Space`** | `janus/speed-hold` | Tap to play/pause (or resume last video if idle), hold for 2x speed |
+| **`Right Click`** | `janus/speed-hold` | Tap to play/pause, hold for 2x speed |
+| **`Alt+n`** | `janus/speed-toggle` | Toggle 2x speed on / off |
+| **`Ctrl+r`** | `janus/play-last` | Resume last played video |
+| **`H`** | `janus/history-vanilla` | Force open vanilla OSD menu |
+| **`Ctrl+h`** | `janus/history-uosc` | Force open uosc menu |
 
-If you want to customize them in `~/.config/mpv/input.conf`:
+---
+
+## Custom Keybindings (`input.conf`)
+
+If you want to customize your shortcuts or add Janus to uosc's menu, put this in `~/.config/mpv/input.conf`:
 
 ```conf
 # Open history (auto-detects uosc or vanilla OSD)
-h 				script-binding janus/open						#! History > Playback History
+h               script-binding janus/open                       #! History > Playback History
 
-# Toggle tracking on/off
-Alt+h 			script-binding janus/toggle-tracking            #! History > Toggle History
+# Toggle history recording on/off
+Alt+h           script-binding janus/toggle-tracking            #! History > Toggle History
 
-# Seek Undo and Redo
-ctrl+z 			script-binding janus/seek-undo
-ctrl+x 			script-binding janus/seek-redo
+# Seek undo & redo
+ctrl+z          script-binding janus/seek-undo
+ctrl+x          script-binding janus/seek-redo
 
-# Hold to speed up / tap to pause (resumes last video when idle)
-SPACE 			script-binding janus/speed-hold
-MBTN_RIGHT 		script-binding janus/speed-hold
+# Hold for 2x speed / tap to play-pause (also resumes last video when mpv is idle)
+SPACE           script-binding janus/speed-hold
+MBTN_RIGHT      script-binding janus/speed-hold
 
 # Resume the last played video explicitly
-ctrl+r 			script-binding janus/play-last
+ctrl+r          script-binding janus/play-last
 
 # Toggle 2x speed on/off
-Alt+n 			script-binding janus/speed-toggle
+Alt+n           script-binding janus/speed-toggle
 
-# Open specific menu styles
-H 				script-binding janus/history-vanilla
-ctrl+h 			script-binding janus/history-uosc
+# Open specific menu styles directly
+H               script-binding janus/history-vanilla
+ctrl+h          script-binding janus/history-uosc
 ```
 
----
-
-## uosc Menus & Controls
-
-If you use **uosc**, you can integrate Janus directly into your menus and timeline buttons:
-
-### Adding to uosc Menu
-Append `#! History > ...` to your keybinding in `~/.config/mpv/input.conf`:
+### Adding a button above the uosc timeline
+If you use uosc and want a clickable history button on your controls bar, add `command:history:script-binding janus/open?History` to `controls` in `~/.config/mpv/script-opts/uosc.conf`:
 
 ```conf
-# Adds Playback History and Toggle History to a "History" submenu in uosc
-h      script-binding janus/open            #! History > Playback History
-Alt+h  script-binding janus/toggle-tracking #! History > Toggle History
-
-# Or add to uosc menu without binding shortcut keys:
-# script-binding janus/open            #! History > Playback History
-# script-binding janus/toggle-tracking #! History > Toggle History
-```
-
-### Adding a Button Above Timeline
-Add `command:history:script-binding janus/open?History` to your `controls` option in `~/.config/mpv/script-opts/uosc.conf`:
-
-```conf
-controls=menu,subtitles,<has_many_audio>audio,<has_many_video>video,<has_many_edition>editions,<stream>stream-quality,items,command:history:script-binding janus/open?History,gap,space,speed,space,shuffle,loop-playlist,loop-file,gap,prev,items,next,gap,fullscreen
+controls=menu,subtitles,<has_many_audio>audio,<has_many_video>video,items,command:history:script-binding janus/open?History,gap,space,speed,space,prev,items,next,gap,fullscreen
 ```
 
 ---
 
-## How to Use
+## How It Works
 
-### Resume Prompt
-When you open a video you've already started:
-- **Enter**: Resume from your saved time
-- **r** / **b** / **Home**: Start from the beginning (`00:00`)
-- **Esc** / **q**: Dismiss the prompt
+### Seek Undo & Redo
+- Whenever you jump (arrow keys, chapter skips, clicking the progress bar), Janus remembers where you started.
+- Rapid seeks within 1 second are treated as one continuous jump. If you tap Right Arrow five times to skip ahead 25 seconds, pressing `Ctrl+z` once brings you all the way back to the beginning of the jump.
+- Remembers up to 5 seeks by default (`seek_history_size`).
 
-If you don't press anything within 10 seconds, it will automatically resume for you. If a video was finished or never watched before, it plays normally from `00:00` without showing any prompt.
+### Speed Controls & Idle Resume
+- **While playing**: Press and hold `Space` or `Right-Click`. After 0.3s it speeds up to 2.0x. Release to snap back to 1.0x. A quick tap just pauses or plays like usual.
+- **When idle**: If mpv is open with nothing loaded, tapping `Space` will find the most recent playable file from your history and start it right where you left off.
 
-### History Menu (Vanilla OSD)
-- **↑ / ↓** (or **k / j**): Move up and down
-- **Enter**: Play selected video
-- **← / →** (or **h / l**): Previous / next page
-- **Del** / **Backspace**: Remove video from history
-- **Esc** / **q**: Close menu
+### Resume Prompt Controls
+When the resume overlay appears on an unfinished video:
+- **`Enter`**: Resume from saved time.
+- **`r`** / **`b`** / **`Home`**: Start from the beginning (`00:00`).
+- **`Esc`** / **`q`**: Dismiss prompt and keep playing from start.
+- If left alone, it automatically resumes after 10 seconds.
+
+### Vanilla Menu Navigation
+- **`↑` / `↓`** (or **`k` / `j`**): Move cursor up/down.
+- **`Enter`**: Play selected item.
+- **`←` / `→`** (or **`h` / `l`**): Previous / next page.
+- **`Del`** / **`Backspace`**: Delete item from history.
+- **`Esc`** / **`q`**: Close menu.
 
 ---
 
-## Configuration
+## Configuration (`janus.conf`)
 
-You can tweak options in `~/.config/mpv/script-opts/janus.conf`:
+Options can be customized in `~/.config/mpv/script-opts/janus.conf`:
 
-| Option | Default | Description |
+| Option | Default | What it does |
 | :--- | :--- | :--- |
-| `enabled` | `yes` | Master switch: enable or disable history tracking |
-| `history_file` | `~~/janus_history.jsonl` | Where your history log is saved |
-| `ignore_paths` | `""` | Folders to ignore (semicolon or comma separated) |
-| `page_size` | `20` | Number of videos displayed per page |
-| `watch_threshold` | `5` | Minimum seconds watched before saving to history |
-| `update_interval` | `15` | Seconds between periodic progress updates |
-| `ask_resume` | `yes` | Ask to resume when loading a previous video |
-| `resume_threshold` | `10` | Minimum saved position (in seconds) to show resume prompt |
-| `resume_end_threshold` | `15` | Ignore resume prompt if within this many seconds from the end |
-| `resume_end_percent` | `95` | Ignore resume prompt if watched past this percent (95% rule) |
-| `resume_skip_playlist` | `no` | Skip resume prompt on playlist auto-advance (binge mode) |
-| `resume_timeout` | `10` | Seconds to wait before auto-resuming (0 to disable) |
-| `resume_pause_on_prompt` | `yes` | Pause playback while asking to resume |
-| `play_last_on_idle` | `yes` | Pressing play while idle resumes the most recent video |
-| `seek_history_enabled` | `yes` | Enable `Ctrl+z` (undo seek) and `Ctrl+x` (redo seek) |
-| `seek_history_size` | `5` | Number of seeks to remember in undo/redo history |
-| `ui_mode` | `auto` | `auto`, `uosc`, or `vanilla` |
-| `speed_enabled` | `yes` | Hold Spacebar or Right Click to temporarily speed up |
-| `speed_target` | `2.0` | Playback speed multiplier while holding |
-| `speed_delay` | `0.3` | Seconds to hold before speeding up activates |
+| `enabled` | `yes` | Master switch for history logging |
+| `history_file` | `~~/janus_history.jsonl` | Where history is stored (`~~/` expands to your mpv config directory) |
+| `max_history` | `5000` | Max entries to preserve during compaction |
+| `compaction_threshold` | `10000` | Line count before cleaning up duplicate log entries |
+| `watch_threshold` | `5` | Seconds watched before a video is logged |
+| `update_interval` | `15` | How often (in seconds) progress is saved while watching |
+| `save_on_pause` | `yes` | Always save timestamp when pausing |
+| `log_urls` | `yes` | Whether to log web streams (YouTube, Twitch, etc.) |
+| `ignore_paths` | `""` | Folders to ignore, separated by commas or semicolons |
+| `resume_offset` | `0` | Rewind this many seconds when resuming (e.g. 2s for context) |
+| `ask_resume` | `yes` | Show prompt when opening unfinished files |
+| `resume_threshold` | `10` | Only ask to resume if saved position is past this many seconds |
+| `resume_end_threshold` | `15` | Don't ask to resume if within this many seconds from the end |
+| `resume_end_percent` | `95` | Don't ask to resume if watched past this percent (skips credits) |
+| `resume_skip_playlist` | `no` | Skip resume prompt when playlist auto-advances (binge mode) |
+| `resume_timeout` | `10` | Seconds before auto-resuming (set `0` to wait indefinitely) |
+| `resume_timeout_action` | `resume` | Action on timeout: `"resume"` or `"beginning"` |
+| `resume_pause_on_prompt` | `yes` | Pause video while the resume prompt is showing |
+| `play_last_on_idle` | `yes` | Pressing Space on an idle window resumes the last video |
+| `seek_history_enabled` | `yes` | Enable `Ctrl+z` and `Ctrl+x` seek undo/redo |
+| `seek_history_size` | `5` | How many seeks to remember in the undo stack |
+| `ui_mode` | `auto` | `"auto"` (uosc if present, else vanilla), `"uosc"`, or `"vanilla"` |
+| `page_size` | `20` | Number of items shown per page in menus |
+| `speed_enabled` | `yes` | Enable hold-to-speed on Space and Right Click |
+| `speed_target` | `2.0` | Speed multiplier while holding |
+| `speed_delay` | `0.3` | How long (seconds) you need to hold before 2x engages |
 
 ---
 
 ## License
 
-MIT License.
+MIT
