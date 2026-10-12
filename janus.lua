@@ -54,6 +54,9 @@ local config = {
     speed_enabled = true,      -- Hold Spacebar to temporarily speed up
     speed_target = 2.0,        -- Playback speed multiplier while holding
     speed_delay = 0.3,         -- Seconds to hold before speeding up activates
+
+    -- Playback on idle
+    play_last_on_idle = true,  -- Play last video from history when pressing play while idle
 }
 
 opt.read_options(config, "janus")
@@ -455,6 +458,31 @@ local function record_history(entry)
 end
 
 -- Load and play a file from history
+local function play_last_played()
+    local page = storage.get_page(1, 10)
+    if not page or not page.items or #page.items == 0 then
+        mp.osd_message("Janus: No history entries found", 2)
+        return
+    end
+
+    local item = nil
+    for _, candidate in ipairs(page.items) do
+        if is_url(candidate.path) or file_exists(candidate.path) then
+            item = candidate
+            break
+        end
+    end
+
+    if not item then
+        mp.osd_message("Janus: Recent videos were moved or deleted", 3)
+        return
+    end
+
+    local name = item.title or get_filename(item.path)
+    mp.osd_message("Janus: Resuming " .. name, 2)
+    play_history_item(item)
+end
+
 local function play_history_item(item)
     if not item or not item.path then return end
 
@@ -1182,6 +1210,14 @@ local function handle_speed_key(event)
     if not config.speed_enabled then return end
     if resume_prompter.is_active or vanilla_menu.is_open then return end
 
+    local current_path = mp.get_property("path")
+    if not current_path or current_path == "" then
+        if event.event == "down" and config.play_last_on_idle then
+            play_last_played()
+        end
+        return
+    end
+
     if event.event == "down" then
         if not speed_state.timer and not speed_state.is_speeding then
             speed_state.timer = mp.add_timeout(config.speed_delay, speed_activate)
@@ -1224,6 +1260,7 @@ if config.speed_enabled then
 end
 mp.add_key_binding(nil, "speed-hold", handle_speed_key, {complex = true})
 mp.add_key_binding(nil, "speed-toggle", toggle_speed)
+mp.add_key_binding(nil, "play-last", play_last_played)
 mp.add_key_binding(nil, "toggle", function() ui.toggle() end)
 mp.add_key_binding(nil, "history", function() ui.open() end)
 mp.add_key_binding(nil, "history-vanilla", function() vanilla_menu.open() end)
@@ -1299,5 +1336,6 @@ mp.register_script_message("compact", function()
 end)
 
 mp.register_script_message("speed-toggle", toggle_speed)
+mp.register_script_message("play-last", play_last_played)
 
 msg.info("Janus initialized successfully")
