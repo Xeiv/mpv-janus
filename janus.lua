@@ -8,10 +8,26 @@ local config = {
     max_history = 5000,
     compaction_threshold = 10000,
     page_size = 20,
+    watch_threshold = 5,
+    update_interval = 30,
+    save_on_pause = true,
+    log_urls = true,
 }
 
 opt.read_options(config, "janus")
 local history_path = mp.command_native({"expand-path", config.history_file})
+
+local function get_filename(path)
+    if not path or path == "" then return "Unknown" end
+    local cleaned = path:gsub("[/\\]+$", "")
+    local name = cleaned:match("([^/\\]+)$")
+    return name or path
+end
+
+local function is_url(path)
+    if not path then return false end
+    return path:match("^%a[%w+.-]*://") ~= nil
+end
 
 local storage = {
     append_count = 0,
@@ -193,4 +209,101 @@ function storage.check_compaction()
     end
 end
 
-msg.info("Janus: storage initialized")
+-- Playback Tracker
+local tracker = {
+    current = {
+        path = nil,
+        title = nil,
+        pos = 0,
+        duration = 0,
+        watch_time = 0,
+        qualified = false,
+    },
+    timer = nil,
+    is_paused = false,
+}
+
+local function tracker_save()
+    if not tracker.current.path or not tracker.current.qualified then
+        return
+    end
+
+    tracker.current.pos = mp.get_property_number("time-pos", tracker.current.pos) or tracker.current.pos
+    tracker.current.duration = mp.get_property_number("duration", tracker.current.duration) or tracker.current.duration
+    local title = mp.get_property("media-title")
+    if title and title ~= "" then
+        tracker.current.title = title
+    end
+
+    storage.append({
+        path = tracker.current.path,
+        title = tracker.current.title,
+        pos = math.floor((tracker.current.pos or 0) * 10) / 10,
+        duration = math.floor(tracker.current.duration or 0),
+        time = os.time(),
+    })
+end
+
+local function tracker_on_tick()
+    if tracker.is_paused or not tracker.current.path then
+        return
+    end
+
+    tracker.current.watch_time = tracker.current.watch_time + 1
+
+    if not tracker.current.qualified and tracker.current.watch_time >= config.watch_threshold then
+        tracker.current.qualified = true
+        tracker_save()
+    elseif tracker.current.qualified and (tracker.current.watch_time % config.update_interval == 0) then
+        tracker_save()
+    end
+end
+
+mp.register_event("file-loaded", function()
+    local path = mp.get_property("path")
+    if not path or path == "" then
+        tracker.current.path = nil
+        return
+    end
+
+    if not config.log_urls and is_url(path) then
+        tracker.current.path = nil
+        return
+    end
+
+    tracker.current = {
+        path = path,
+        title = mp.get_property("media-title") or get_filename(path),
+        pos = mp.get_property_number("time-pos", 0) or 0,
+        duration = mp.get_property_number("duration", 0) or 0,
+        watch_time = 0,
+        qualified = false,
+    }
+
+    tracker.is_paused = mp.get_property_bool("pause", false)
+
+    if config.watch_threshold <= 0 then
+        tracker.current.qualified = true
+        tracker_save()
+    end
+end)
+
+mp.observe_property("pause", "bool", function(_, paused)
+    tracker.is_paused = paused
+    if paused and config.save_on_pause and tracker.current.qualified then
+        tracker_save()
+    end
+end)
+
+mp.register_event("end-file", function()
+    if tracker.current.qualified then
+        tracker_save()
+    end
+    tracker.current.path = nil
+    tracker.current.qualified = false
+    tracker.current.watch_time = 0
+end)
+
+tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)
+
+msg.info("Janus: tracker initialized")
