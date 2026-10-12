@@ -58,6 +58,10 @@ local config = {
 
     -- Playback on idle
     play_last_on_idle = true,  -- Play last video from history when pressing play while idle
+
+    -- Seek Undo / Redo
+    seek_history_enabled = true, -- Enable Ctrl+z (undo) and Ctrl+x (redo) for seeks
+    seek_history_size = 5,       -- Maximum number of seeks to remember in stack
 }
 
 opt.read_options(config, "janus")
@@ -444,6 +448,7 @@ local tracker = {
 ---@field check? fun(path: string)
 ---@field cancel? fun()
 local resume_prompter
+local seek_history_reset = function() end
 
 -- Save current video info to history
 local function record_history(entry)
@@ -1088,6 +1093,7 @@ mp.register_script_message("uosc-version", function()
 end)
 
 mp.register_event("file-loaded", function()
+    seek_history_reset()
     local path = mp.get_property("path")
     if not path or path == "" or should_ignore_path(path) then
         tracker.current.path = nil
@@ -1130,6 +1136,7 @@ mp.observe_property("pause", "bool", function(_, paused)
 end)
 
 mp.register_event("end-file", function()
+    seek_history_reset()
     if speed_state and speed_state.is_speeding then
         speed_deactivate()
     end
@@ -1259,7 +1266,159 @@ local function toggle_speed()
 end
 
 -- ============================================================================
--- 9. Keybindings & Script Messages
+-- 9. Seek History (Undo / Redo)
+-- ============================================================================
+
+---@class SeekHistory
+---@field stack number[]
+---@field index number
+---@field last_normal_pos? number
+---@field last_pos_time number
+---@field is_navigating boolean
+---@field debounce_timer? any
+---@field pending_origin? number
+local seek_history = {
+    stack = {},
+    index = 0,
+    last_normal_pos = nil,
+    last_pos_time = 0,
+    is_navigating = false,
+    debounce_timer = nil,
+    pending_origin = nil,
+}
+
+local function seek_history_reset()
+    seek_history.stack = {}
+    seek_history.index = 0
+    seek_history.last_normal_pos = nil
+    seek_history.last_pos_time = 0
+    seek_history.is_navigating = false
+    seek_history.pending_origin = nil
+    if seek_history.debounce_timer then
+        seek_history.debounce_timer:kill()
+        seek_history.debounce_timer = nil
+    end
+end
+
+local function seek_history_push(origin, destination)
+    if not origin or not destination then return end
+    origin = math.floor(origin * 10) / 10
+    destination = math.floor(destination * 10) / 10
+    if math.abs(origin - destination) < 2 then return end
+
+    if #seek_history.stack == 0 then
+        table.insert(seek_history.stack, origin)
+        seek_history.index = 1
+    else
+        while #seek_history.stack > seek_history.index do
+            table.remove(seek_history.stack)
+        end
+        local top = seek_history.stack[#seek_history.stack]
+        if not top or math.abs(top - origin) >= 2 then
+            table.insert(seek_history.stack, origin)
+            seek_history.index = #seek_history.stack
+        end
+    end
+
+    table.insert(seek_history.stack, destination)
+    seek_history.index = #seek_history.stack
+
+    local max_points = (config.seek_history_size or 5) + 1
+    while #seek_history.stack > max_points do
+        table.remove(seek_history.stack, 1)
+        seek_history.index = math.max(1, seek_history.index - 1)
+    end
+end
+
+local function seek_undo()
+    if not config.seek_history_enabled then return end
+    if resume_prompter.is_active or vanilla_menu.is_open then return end
+
+    if seek_history.debounce_timer then
+        seek_history.debounce_timer:kill()
+        seek_history.debounce_timer = nil
+        if seek_history.pending_origin then
+            local current_pos = mp.get_property_number("time-pos", 0)
+            seek_history_push(seek_history.pending_origin, current_pos)
+            seek_history.pending_origin = nil
+        end
+    end
+
+    if seek_history.index <= 1 then
+        mp.osd_message("Janus: No previous seek to undo", 1.5)
+        return
+    end
+
+    seek_history.index = seek_history.index - 1
+    local target_pos = seek_history.stack[seek_history.index]
+
+    seek_history.is_navigating = true
+    mp.commandv("seek", tostring(target_pos), "absolute", "exact")
+    mp.osd_message(string.format("↩ Seek Undo: %s", format_duration(target_pos)), 1.5)
+
+    mp.add_timeout(0.5, function()
+        seek_history.last_normal_pos = target_pos
+        seek_history.last_pos_time = mp.get_time()
+        seek_history.is_navigating = false
+    end)
+end
+
+local function seek_redo()
+    if not config.seek_history_enabled then return end
+    if resume_prompter.is_active or vanilla_menu.is_open then return end
+
+    if seek_history.index >= #seek_history.stack then
+        mp.osd_message("Janus: No seek to redo", 1.5)
+        return
+    end
+
+    seek_history.index = seek_history.index + 1
+    local target_pos = seek_history.stack[seek_history.index]
+
+    seek_history.is_navigating = true
+    mp.commandv("seek", tostring(target_pos), "absolute", "exact")
+    mp.osd_message(string.format("↪ Seek Redo: %s", format_duration(target_pos)), 1.5)
+
+    mp.add_timeout(0.5, function()
+        seek_history.last_normal_pos = target_pos
+        seek_history.last_pos_time = mp.get_time()
+        seek_history.is_navigating = false
+    end)
+end
+
+mp.observe_property("time-pos", "number", function(_, pos)
+    if not config.seek_history_enabled or not pos or seek_history.is_navigating then return end
+    local now = mp.get_time()
+
+    if seek_history.last_normal_pos then
+        local elapsed = now - seek_history.last_pos_time
+        local expected_diff = elapsed * (mp.get_property_native("speed") or 1.0)
+        local actual_diff = pos - seek_history.last_normal_pos
+
+        if math.abs(actual_diff) > math.max(2.5, expected_diff + 2.0) then
+            if not seek_history.pending_origin then
+                seek_history.pending_origin = seek_history.last_normal_pos
+            end
+
+            if seek_history.debounce_timer then
+                seek_history.debounce_timer:kill()
+            end
+            seek_history.debounce_timer = mp.add_timeout(0.8, function()
+                if seek_history.pending_origin then
+                    seek_history_push(seek_history.pending_origin, pos)
+                    seek_history.pending_origin = nil
+                end
+                seek_history.debounce_timer = nil
+            end)
+        end
+    end
+
+    seek_history.last_normal_pos = pos
+    seek_history.last_pos_time = now
+end)
+
+-- ============================================================================
+-- 10. Keybindings & Script Messages
 -- ============================================================================
 
 -- Keybindings (defaults: 'h' opens history, 'Alt+h' toggles tracking, Space/Right-Click hold to speed, Alt+n toggle)
@@ -1270,6 +1429,12 @@ if config.speed_enabled then
     mp.add_forced_key_binding("MBTN_RIGHT", "speed-hold-mouse", handle_speed_key, {complex = true})
     mp.add_forced_key_binding("Alt+n", "speed-toggle-key", toggle_speed)
 end
+if config.seek_history_enabled then
+    mp.add_forced_key_binding("ctrl+z", "seek-undo", seek_undo)
+    mp.add_forced_key_binding("ctrl+x", "seek-redo", seek_redo)
+end
+mp.add_key_binding(nil, "seek-undo", seek_undo)
+mp.add_key_binding(nil, "seek-redo", seek_redo)
 mp.add_key_binding(nil, "speed-hold", handle_speed_key, {complex = true})
 mp.add_key_binding(nil, "speed-toggle", toggle_speed)
 mp.add_key_binding(nil, "play-last", play_last_played)
@@ -1349,5 +1514,7 @@ end)
 
 mp.register_script_message("speed-toggle", toggle_speed)
 mp.register_script_message("play-last", play_last_played)
+mp.register_script_message("seek-undo", seek_undo)
+mp.register_script_message("seek-redo", seek_redo)
 
 msg.info("Janus initialized successfully")

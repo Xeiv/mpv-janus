@@ -22,6 +22,7 @@ The plugin was built with that exact duality in mind:
 - **Fast & Lightweight**: Keeps track of recently watched videos without slowing down mpv. It uses pagination so it only loads a small page of items at a time instead of reading your whole history into memory.
 - **Resume Where You Left Off**: When you open a video you've watched before, Janus pops up a quick prompt asking if you want to resume where you left off or start from the beginning. If a video was finished or has no saved position, it starts normally from 0:00 without nagging.
 - **Resume Last Played on Idle**: When opening mpv with no file playing (idle window), pressing `Space` immediately opens and resumes your most recently played video.
+- **Seek Undo & Redo**: Accidentally jumped across the timeline or pressed the wrong arrow key? Press `Ctrl+z` to undo your seek and jump back, and `Ctrl+x` to redo.
 - **Smart 95% Completion Rule**: Automatically skips the resume prompt and restarts from the beginning if you previously finished the video or left during the end credits (configurable threshold and 95% rule).
 - **Hold to Speed Up (YouTube Style)**: Press and hold `Space` or `Right Click` to temporarily speed up playback to 2.0x with audio pitch correction kept intact. Releasing it smoothly restores normal speed, while a quick tap plays/pauses. You can also toggle 2.0x speed anytime with `Alt+n`.
 - **Missing & Deleted File Detection**: If a video in your history was moved, deleted, or is on an unmounted drive, Janus strikes through its title and marks it `[Deleted or Moved]`. Clicking it gives a clear on-screen notice instead of failing.
@@ -69,6 +70,8 @@ cp janus.conf ~/.config/mpv/script-opts/
 Janus provides built-in default shortcuts:
 - **`h`**: Open the Janus history menu
 - **`Alt+h`**: Toggle history tracking on or off
+- **`Ctrl+z`**: Undo seek (jump back to previous position)
+- **`Ctrl+x`**: Redo seek
 - **`Space`**: Tap to play/pause (or resume last video when idle), hold to speed up to 2.0x
 - **Right Click (`MBTN_RIGHT`)**: Tap to play/pause, hold to speed up to 2.0x
 - **`Alt+n`**: Toggle 2.0x speed on or off
@@ -81,6 +84,10 @@ h 				script-binding janus/open						#! History > Playback History
 
 # Toggle tracking on/off
 Alt+h 			script-binding janus/toggle-tracking            #! History > Toggle History
+
+# Seek Undo and Redo
+ctrl+z 			script-binding janus/seek-undo
+ctrl+x 			script-binding janus/seek-redo
 
 # Hold to speed up / tap to pause (resumes last video when idle)
 SPACE 			script-binding janus/speed-hold
@@ -164,6 +171,8 @@ You can tweak options in `~/.config/mpv/script-opts/janus.conf`:
 | `resume_timeout` | `10` | Seconds to wait before auto-resuming (0 to disable) |
 | `resume_pause_on_prompt` | `yes` | Pause playback while asking to resume |
 | `play_last_on_idle` | `yes` | Pressing play while idle resumes the most recent video |
+| `seek_history_enabled` | `yes` | Enable `Ctrl+z` (undo seek) and `Ctrl+x` (redo seek) |
+| `seek_history_size` | `5` | Number of seeks to remember in undo/redo history |
 | `ui_mode` | `auto` | `auto`, `uosc`, or `vanilla` |
 | `speed_enabled` | `yes` | Hold Spacebar or Right Click to temporarily speed up |
 | `speed_target` | `2.0` | Playback speed multiplier while holding |
