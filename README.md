@@ -1,8 +1,8 @@
-# Janus — History Plugin for mpv
+# Janus — History, Resume & Playback Controls for mpv
 
-**Janus** is a lightweight, modern playback history and resume plugin for [mpv](https://mpv.io).
+**Janus** is a lightweight, modern playback history, smart resume, and speed-control plugin for [mpv](https://mpv.io).
 
-It keeps track of recently watched videos, lets you resume where you left off, and offers both native [uosc](https://github.com/darsain/uosc) menu integration and a clean built-in on-screen display for vanilla mpv setups.
+It keeps track of recently watched videos, lets you resume where you left off, provides smooth YouTube-style hold-to-speed controls, and offers both native [uosc](https://github.com/darsain/uosc) menu integration and a clean built-in on-screen display for vanilla mpv setups.
 
 ---
 

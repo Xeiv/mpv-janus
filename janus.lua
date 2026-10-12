@@ -1,10 +1,11 @@
 -- ============================================================================
--- Janus: History & Resume Plugin for mpv
+-- Janus: History, Resume & Playback Controls for mpv
 --
 -- Features:
 --   - Fast and lightweight history log saved as json lines
 --   - Loads history in pages from the end of the file so it stays fast
 --   - Prompts to resume playback or start from the beginning
+--   - Hold Spacebar or Right Click to speed up (YouTube style)
 --   - Works with uosc menus or default mpv on-screen display
 --   - Ignores short clips or skipped files to keep history tidy
 --   - Toggle history tracking on or off anytime with Alt+h
