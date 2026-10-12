@@ -426,8 +426,18 @@ local function play_history_item(item)
         start_pos = 0
     end
 
+    local current_path = mp.get_property("path")
+    if current_path and (current_path == item.path or current_path == mp.command_native({"expand-path", item.path})) then
+        if start_pos > 0 then
+            mp.commandv("seek", tostring(start_pos), "absolute", "exact")
+        else
+            mp.commandv("seek", "0", "absolute", "exact")
+        end
+        return
+    end
+
     if start_pos > 0 then
-        mp.commandv("loadfile", item.path, "replace", "start=" .. tostring(start_pos))
+        mp.commandv("loadfile", item.path, "replace", "-1", "start=" .. tostring(start_pos))
     else
         mp.commandv("loadfile", item.path, "replace")
     end
