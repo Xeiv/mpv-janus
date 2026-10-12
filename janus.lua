@@ -1,78 +1,61 @@
--- ============================================================================
--- Janus: History, Resume & Playback Controls for mpv
---
--- Features:
---   - Fast and lightweight history log saved as json lines
---   - Loads history in pages from the end of the file so it stays fast
---   - Prompts to resume playback or start from the beginning
---   - Hold Spacebar or Right Click to speed up (YouTube style)
---   - Works with uosc menus or default mpv on-screen display
---   - Ignores short clips or skipped files to keep history tidy
---   - Toggle history tracking on or off anytime with Alt+h
--- ============================================================================
+-- Janus: playback history, smart resume, speed hold, and seek undo/redo for mpv
+-- https://github.com/xeiv/mpv-janus
+
 
 local mp = require("mp")
 local msg = require("mp.msg")
 local opt = require("mp.options")
 local utils = require("mp.utils")
 
--- ============================================================================
--- 1. Configuration & Options
--- ============================================================================
 
 local config = {
-    -- State
-    enabled = true,            -- Whether history tracking is enabled
+    enabled = true,
 
-    -- Storage
+    -- storage
     history_file = "~~/janus_history.jsonl",
     max_history = 5000,
     compaction_threshold = 10000,
 
-    -- Logging rules
-    watch_threshold = 5,       -- Minimum seconds played before saving to history
-    update_interval = 15,      -- Seconds between periodic progress updates
-    save_on_pause = true,      -- Save current position when pausing
-    log_urls = true,           -- Whether to record web URLs/streams
-    resume_offset = 0,         -- Seconds before saved position when resuming
-    ignore_paths = "",           -- Paths or folders to ignore (semicolon or comma separated)
+    -- logging rules
+    watch_threshold = 5,
+    update_interval = 15,
+    save_on_pause = true,
+    log_urls = true,
+    resume_offset = 0,
+    ignore_paths = "",
 
-    -- Resume prompt
-    ask_resume = true,                 -- Ask to resume playback when loading a file
-    resume_threshold = 10,             -- Minimum saved position (seconds) to trigger prompt
-    resume_end_threshold = 15,         -- Ignore if within this many seconds from duration end
-    resume_end_percent = 95,           -- Ignore if progress is past this percentage (95% rule)
-    resume_skip_playlist = false,      -- Skip resume prompt on playlist auto-advance
-    resume_timeout = 10,               -- Countdown timeout in seconds (0 to disable)
-    resume_timeout_action = "resume",  -- Action on timeout: "resume" or "beginning"
-    resume_pause_on_prompt = true,     -- Pause playback while resume prompt is active
+    -- resume prompt
+    ask_resume = true,
+    resume_threshold = 10,
+    resume_end_threshold = 15,
+    resume_end_percent = 95,
+    resume_skip_playlist = false,
+    resume_timeout = 10,
+    resume_timeout_action = "resume",
+    resume_pause_on_prompt = true,
 
-    -- Interface
-    ui_mode = "auto",          -- "auto", "uosc", or "vanilla"
-    page_size = 20,            -- Number of items per history page
+    -- ui
+    ui_mode = "auto",
+    page_size = 20,
 
-    -- Hold to speed up (YouTube style)
-    speed_enabled = true,      -- Hold Spacebar to temporarily speed up
-    speed_target = 2.0,        -- Playback speed multiplier while holding
-    speed_delay = 0.3,         -- Seconds to hold before speeding up activates
+    -- speed controls
+    speed_enabled = true,
+    speed_target = 2.0,
+    speed_delay = 0.3,
 
-    -- Playback on idle
-    play_last_on_idle = true,  -- Play last video from history when pressing play while idle
+    -- idle
+    play_last_on_idle = true,
 
-    -- Seek Undo / Redo
-    seek_history_enabled = true, -- Enable Ctrl+z (undo) and Ctrl+x (redo) for seeks
-    seek_history_size = 5,       -- Maximum number of seeks to remember in stack
+    -- seek undo/redo
+    seek_history_enabled = true,
+    seek_history_size = 5,
 }
 
 opt.read_options(config, "janus")
 local history_path = mp.command_native({"expand-path", config.history_file})
 local tracking_enabled = config.enabled
 
--- ============================================================================
--- 2. Helpers
--- ============================================================================
 
--- Format seconds into MM:SS or HH:MM:SS
 local function format_duration(seconds)
     if not seconds or seconds < 0 or seconds ~= seconds then
         return "00:00"
@@ -88,7 +71,7 @@ local function format_duration(seconds)
     end
 end
 
--- Convert timestamp to friendly relative time (e.g. 5 mins ago, 2 hrs ago)
+-- relative time helper for menu items
 local function format_relative_time(epoch, now)
     if not epoch or epoch <= 0 then return "" end
     now = now or os.time()
@@ -111,7 +94,6 @@ local function format_relative_time(epoch, now)
     end
 end
 
--- Get file name from full path
 local function get_filename(path)
     if not path or path == "" then return "Unknown" end
     local cleaned = path:gsub("[/\\]+$", "")
@@ -119,13 +101,11 @@ local function get_filename(path)
     return name or path
 end
 
--- Check if path is a web stream or URL
 local function is_url(path)
     if not path then return false end
     return path:match("^%a[%w+.-]*://") ~= nil
 end
 
--- Check if a local file exists on disk
 local function file_exists(path)
     if not path or path == "" then return false end
     if is_url(path) then return true end
@@ -134,7 +114,7 @@ local function file_exists(path)
     return info ~= nil
 end
 
--- Add unicode strikethrough to a string (for uosc rendering)
+-- apply unicode strikethrough for missing/deleted files in uosc
 local function strikethrough(str)
     if not str or str == "" then return "" end
     local res = {}
@@ -146,7 +126,7 @@ local function strikethrough(str)
     return table.concat(res)
 end
 
--- Check if a path matches ignored folder or directory patterns
+-- check if path matches any pattern in ignore_paths
 local function should_ignore_path(path)
     if not path or path == "" then return true end
     if config.ignore_paths and config.ignore_paths ~= "" then
@@ -161,7 +141,7 @@ local function should_ignore_path(path)
     return false
 end
 
--- Escape characters for safe ASS text rendering
+-- escape special characters for ASS subtitles/OSD
 local function escape_ass(text)
     if not text then return "" end
     local escaped = tostring(text)
@@ -171,14 +151,13 @@ local function escape_ass(text)
     return escaped
 end
 
--- Shorten long titles with an ellipsis
+-- truncate long titles with an ellipsis
 local function truncate_string(str, max_len)
     if not str then return "" end
     if #str <= max_len then return str end
     return str:sub(1, max_len - 3) .. "..."
 end
 
--- Toggle history tracking on or off
 local function toggle_tracking()
     tracking_enabled = not tracking_enabled
     local status = tracking_enabled and "enabled" or "disabled"
@@ -186,15 +165,11 @@ local function toggle_tracking()
     msg.info(string.format("Janus: History tracking %s", status))
 end
 
--- ============================================================================
--- 3. History Storage (JSON Lines File)
--- ============================================================================
 
 local storage = {
     append_count = 0,
 }
 
--- Create folder if it doesn't exist yet
 local function ensure_dir(path)
     local dir = path:match("^(.*)[/\\]")
     if not dir or dir == "" then return end
@@ -207,7 +182,6 @@ local function ensure_dir(path)
     })
 end
 
--- Append a video entry to the history file
 function storage.append(entry)
     if not entry or not entry.path then return false end
     ensure_dir(history_path)
@@ -228,7 +202,7 @@ function storage.append(entry)
     return true
 end
 
--- Read lines from the end of the file backwards to load pages quickly
+-- scan lines backwards from EOF in chunks so we only read what is needed
 local function reverse_scan_lines(chunk_size, callback)
     local f = io.open(history_path, "rb")
     if not f then return end
@@ -277,7 +251,6 @@ local function reverse_scan_lines(chunk_size, callback)
     f:close()
 end
 
--- Load a single page of history entries
 function storage.get_page(page, page_size)
     page = math.max(1, tonumber(page) or 1)
     page_size = math.max(1, tonumber(page_size) or config.page_size)
@@ -317,7 +290,6 @@ function storage.get_page(page, page_size)
     }
 end
 
--- Find the most recent record for a specific video
 function storage.get_entry(target_path)
     if not target_path or target_path == "" then return nil end
     local result = nil
@@ -335,7 +307,6 @@ function storage.get_entry(target_path)
     return result
 end
 
--- Mark an item as deleted in the log
 function storage.remove(target_path)
     if not target_path or target_path == "" then return false end
     return storage.append({
@@ -345,7 +316,6 @@ function storage.remove(target_path)
     })
 end
 
--- Clear all history
 function storage.clear()
     local f = io.open(history_path, "w")
     if f then
@@ -356,7 +326,7 @@ function storage.clear()
     return false
 end
 
--- Clean up duplicate entries and keep the history file tidy
+-- compact history: remove duplicates and tombstoned entries
 function storage.compact()
     local entries = {}
     local seen = {}
@@ -402,7 +372,6 @@ function storage.compact()
     return true, count
 end
 
--- Check if history has grown large enough to need cleanup
 function storage.check_compaction()
     local f = io.open(history_path, "r")
     if not f then return end
@@ -415,14 +384,7 @@ function storage.check_compaction()
     end
 end
 
--- ============================================================================
--- 4. Playback Tracking
--- ============================================================================
 
----@class Tracker
----@field current table
----@field timer? any
----@field is_paused boolean
 local tracker = {
     current = {
         path = nil,
@@ -436,21 +398,9 @@ local tracker = {
     is_paused = false,
 }
 
----@class ResumePrompter
----@field is_active boolean
----@field target_pos number
----@field original_paused boolean
----@field remaining_seconds number
----@field timer? any
----@field overlay? any
----@field key_bindings table<string, boolean>
----@field handle_action? fun(action: string)
----@field check? fun(path: string)
----@field cancel? fun()
 local resume_prompter
 local seek_history_reset = function() end
 
--- Save current video info to history
 local function record_history(entry)
     if not tracking_enabled or not entry or not entry.path or should_ignore_path(entry.path) then return false end
     if not entry.title or entry.title == "" then
@@ -463,7 +413,6 @@ local function record_history(entry)
     return storage.append(entry)
 end
 
--- Load and play a file from history
 local function play_history_item(item)
     if not item or not item.path then return end
 
@@ -475,7 +424,7 @@ local function play_history_item(item)
     local pos = item.pos or 0
     local start_pos = math.max(0, pos - config.resume_offset)
 
-    -- If position is right near the end (15s or 95% finished), start from beginning instead
+    -- skip resume and start fresh if near the end or past completion threshold
     if item.duration and item.duration > 0 then
         local remaining = item.duration - start_pos
         local percent = (start_pos / item.duration) * 100
@@ -501,7 +450,7 @@ local function play_history_item(item)
     end
 end
 
--- Resume the most recent valid video from history
+-- resume most recent playable file
 local function play_last_played()
     local page = storage.get_page(1, 10)
     if not page or not page.items or #page.items == 0 then
@@ -527,7 +476,6 @@ local function play_last_played()
     play_history_item(item)
 end
 
--- Save current playback position
 local function tracker_save()
     if not tracking_enabled or resume_prompter.is_active or not tracker.current.path or not tracker.current.qualified or should_ignore_path(tracker.current.path) then
         return
@@ -549,7 +497,6 @@ local function tracker_save()
     })
 end
 
--- Heartbeat timer: counts active watch time
 local function tracker_on_tick()
     if not tracking_enabled or resume_prompter.is_active or tracker.is_paused or not tracker.current.path or should_ignore_path(tracker.current.path) then
         return
@@ -557,7 +504,7 @@ local function tracker_on_tick()
 
     tracker.current.watch_time = tracker.current.watch_time + 1
 
-    -- Qualify for history once minimum threshold is met
+    -- qualify for logging once minimum watch time is met
     if not tracker.current.qualified and tracker.current.watch_time >= config.watch_threshold then
         tracker.current.qualified = true
         tracker_save()
@@ -566,9 +513,6 @@ local function tracker_on_tick()
     end
 end
 
--- ============================================================================
--- 5. Resume Prompt (uosc & Vanilla OSD)
--- ============================================================================
 
 local ui = { has_uosc = false } -- Forward declaration
 
@@ -589,7 +533,6 @@ local function resume_remove_keys()
     resume_prompter.key_bindings = {}
 end
 
--- Close prompt and clean up timer / keys
 local function resume_close_ui()
     if resume_prompter.timer then
         resume_prompter.timer:kill()
@@ -608,7 +551,6 @@ local function resume_close_ui()
     resume_prompter.is_active = false
 end
 
--- Show centered resume prompt on screen for vanilla mpv
 local function resume_render_vanilla()
     if not resume_prompter.is_active then return end
     if not resume_prompter.overlay then
@@ -634,7 +576,6 @@ local function resume_render_vanilla()
     resume_prompter.overlay:update()
 end
 
--- Build prompt menu items for uosc
 local function resume_build_uosc_menu()
     local pos_str = format_duration(resume_prompter.target_pos)
     local action_name = config.resume_timeout_action == "beginning" and "beginning" or "resuming"
@@ -664,7 +605,6 @@ local function resume_build_uosc_menu()
     }
 end
 
--- Handle resume action chosen by user or timeout
 function resume_prompter.handle_action(action)
     if not resume_prompter.is_active then return end
 
@@ -686,7 +626,6 @@ function resume_prompter.handle_action(action)
     end
 end
 
--- Countdown timer tick for resume prompt
 local function resume_on_tick()
     if not resume_prompter.is_active then return end
     resume_prompter.remaining_seconds = resume_prompter.remaining_seconds - 1
@@ -703,7 +642,6 @@ local function resume_on_tick()
     end
 end
 
--- Check if opened video has saved progress and show prompt if so
 function resume_prompter.check(path)
     if not config.ask_resume or not path or path == "" or should_ignore_path(path) then return end
     if not config.log_urls and is_url(path) then return end
@@ -762,26 +700,13 @@ function resume_prompter.check(path)
     end
 end
 
--- Cancel prompt if file ends or changes
 function resume_prompter.cancel()
     if resume_prompter.is_active then
         resume_close_ui()
     end
 end
 
--- ============================================================================
--- 6. History Menus (uosc & Vanilla OSD)
--- ============================================================================
 
----@class VanillaMenu
----@field is_open boolean
----@field current_page number
----@field page_data? any
----@field selected_index number
----@field overlay? any
----@field key_bindings table<string, boolean>
----@field open? fun()
----@field close? fun()
 local vanilla_menu = {
     is_open = false,
     current_page = 1,
@@ -791,7 +716,6 @@ local vanilla_menu = {
     key_bindings = {},
 }
 
--- Render history list on screen
 local function vanilla_render()
     if not vanilla_menu.is_open then return end
     if not vanilla_menu.overlay then
@@ -844,7 +768,6 @@ local function vanilla_render()
     vanilla_menu.overlay:update()
 end
 
--- Refresh current page contents
 local function vanilla_refresh()
     vanilla_menu.page_data = storage.get_page(vanilla_menu.current_page)
     local items = vanilla_menu.page_data.items
@@ -860,7 +783,6 @@ local function vanilla_refresh()
     vanilla_render()
 end
 
--- Close the on-screen menu
 function vanilla_menu.close()
     if not vanilla_menu.is_open then return end
     vanilla_menu.is_open = false
@@ -873,7 +795,6 @@ function vanilla_menu.close()
     end
 end
 
--- Open the on-screen menu
 function vanilla_menu.open()
     if vanilla_menu.is_open then
         vanilla_menu.close()
@@ -948,12 +869,10 @@ function vanilla_menu.open()
     vanilla_refresh()
 end
 
--- uosc menu integration
 local uosc_menu = {
     current_page = 1,
 }
 
--- Build menu structure for uosc
 local function uosc_build_menu(page_num)
     uosc_menu.current_page = page_num
     local page_data = storage.get_page(page_num)
@@ -1054,7 +973,6 @@ function uosc_menu.update(page_num)
     mp.commandv("script-message-to", "uosc", "update-menu", json)
 end
 
--- Open history using uosc if available or vanilla OSD as fallback
 function ui.open(page_num)
     local mode = config.ui_mode or "auto"
     if mode == "vanilla" then
@@ -1070,7 +988,6 @@ function ui.open(page_num)
     end
 end
 
--- Toggle history menu
 function ui.toggle()
     local mode = config.ui_mode or "auto"
     if mode == "vanilla" or (mode == "auto" and not ui.has_uosc) then
@@ -1084,9 +1001,6 @@ function ui.toggle()
     end
 end
 
--- ============================================================================
--- 7. mpv Events
--- ============================================================================
 
 mp.register_script_message("uosc-version", function()
     ui.has_uosc = true
@@ -1151,16 +1065,7 @@ end)
 
 tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)
 
--- ============================================================================
--- 8. Hold to Speed Up (YouTube Style)
--- ============================================================================
 
----@class SpeedState
----@field is_speeding boolean
----@field was_paused boolean
----@field normal_speed number
----@field timer any
----@field orig_pitch_correction? boolean
 local speed_state = {
     is_speeding = false,
     was_paused = false,
@@ -1176,7 +1081,7 @@ local function speed_activate(is_toggle)
     speed_state.normal_speed = mp.get_property_native("speed") or 1.0
     speed_state.was_paused = mp.get_property_native("pause") or false
 
-    -- Safeguard: ensure audio pitch correction is enabled during speed-up
+    -- keep pitch correction on so audio stays intelligible at higher speeds
     speed_state.orig_pitch_correction = mp.get_property_native("audio-pitch-correction")
     if speed_state.orig_pitch_correction == false then
         mp.set_property_native("audio-pitch-correction", true)
@@ -1250,7 +1155,7 @@ local function handle_speed_key(event)
         if speed_state.is_speeding then
             speed_deactivate()
         else
-            -- Quick tap (under speed_delay): toggle play/pause
+            -- quick tap: toggle play/pause
             local paused = mp.get_property_native("pause")
             mp.set_property_native("pause", not paused)
         end
@@ -1265,18 +1170,7 @@ local function toggle_speed()
     end
 end
 
--- ============================================================================
--- 9. Seek History (Undo / Redo)
--- ============================================================================
 
----@class SeekHistory
----@field stack number[]
----@field index number
----@field last_normal_pos? number
----@field last_pos_time number
----@field is_navigating boolean
----@field debounce_timer? any
----@field pending_origin? number
 local seek_history = {
     stack = {},
     index = 0,
@@ -1396,6 +1290,7 @@ mp.observe_property("time-pos", "number", function(_, pos)
         local actual_diff = pos - seek_history.last_normal_pos
 
         if math.abs(actual_diff) > math.max(2.5, expected_diff + 2.0) then
+            -- debounce rapid seeks (e.g. tapping arrow keys) into a single jump
             if not seek_history.pending_origin then
                 seek_history.pending_origin = seek_history.last_normal_pos
             end
@@ -1417,11 +1312,8 @@ mp.observe_property("time-pos", "number", function(_, pos)
     seek_history.last_pos_time = now
 end)
 
--- ============================================================================
--- 10. Keybindings & Script Messages
--- ============================================================================
 
--- Keybindings (defaults: 'h' opens history, 'Alt+h' toggles tracking, Space/Right-Click hold to speed, Alt+n toggle)
+-- default keybindings
 mp.add_key_binding("h", "open", function() ui.open() end)
 mp.add_key_binding("Alt+h", "toggle-tracking", toggle_tracking)
 if config.speed_enabled then
@@ -1443,7 +1335,6 @@ mp.add_key_binding(nil, "history", function() ui.open() end)
 mp.add_key_binding(nil, "history-vanilla", function() vanilla_menu.open() end)
 mp.add_key_binding(nil, "history-uosc", function() uosc_menu.open(1) end)
 
--- Script Messages
 mp.register_script_message("open", function() ui.open() end)
 mp.register_script_message("toggle", function() ui.toggle() end)
 mp.register_script_message("toggle-tracking", toggle_tracking)
