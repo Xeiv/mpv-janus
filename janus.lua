@@ -129,6 +129,14 @@ local function file_exists(path)
     return info ~= nil
 end
 
+local function is_same_path(path1, path2)
+    if not path1 or not path2 then return false end
+    if path1 == path2 then return true end
+    local exp1 = mp.command_native({"expand-path", path1})
+    local exp2 = mp.command_native({"expand-path", path2})
+    return exp1 == exp2 or exp1 == path2 or path1 == exp2
+end
+
 -- apply unicode strikethrough for missing/deleted files in uosc
 local function strikethrough(str)
     if not str or str == "" then return "" end
@@ -420,6 +428,7 @@ local tracker = {
 }
 
 local resume_prompter
+local resume_prompt_forced = false
 local seek_history_reset = function() end
 
 local function record_history(entry)
@@ -434,7 +443,7 @@ local function record_history(entry)
     return storage.append(entry)
 end
 
-local function play_history_item(item)
+local function play_history_item(item, direct_resume)
     if not item or not item.path then return end
 
     if not is_url(item.path) and not file_exists(item.path) then
@@ -442,6 +451,13 @@ local function play_history_item(item)
         msg.warn("Janus: Cannot play, file has been moved or deleted: " .. item.path)
         return
     end
+
+    local current_path = mp.get_property("path")
+    if is_same_path(current_path, item.path) then
+        -- already playing: don't reload or prompt, keep playback uninterrupted
+        return
+    end
+
     local pos = item.pos or 0
     local start_pos = math.max(0, pos - config.resume_offset)
 
@@ -454,20 +470,16 @@ local function play_history_item(item)
         end
     end
 
-    local current_path = mp.get_property("path")
-    if current_path and (current_path == item.path or current_path == mp.command_native({"expand-path", item.path})) then
-        if start_pos > 0 then
-            mp.commandv("seek", tostring(start_pos), "absolute", "exact")
-        else
-            mp.commandv("seek", "0", "absolute", "exact")
-        end
-        return
-    end
-
-    if start_pos > 0 then
-        mp.commandv("loadfile", item.path, "replace", "-1", "start=" .. tostring(start_pos))
-    else
+    if not direct_resume and config.ask_resume and start_pos >= config.resume_threshold then
+        -- load from beginning so file-loaded shows the resume prompt
+        resume_prompt_forced = true
         mp.commandv("loadfile", item.path, "replace")
+    else
+        if start_pos > 0 then
+            mp.commandv("loadfile", item.path, "replace", "-1", "start=" .. tostring(start_pos))
+        else
+            mp.commandv("loadfile", item.path, "replace")
+        end
     end
 end
 
@@ -494,7 +506,7 @@ local function play_last_played()
 
     local name = item.title or get_filename(item.path)
     mp.osd_message("Janus: Resuming " .. name, 2)
-    play_history_item(item)
+    play_history_item(item, true)
 end
 
 local function tracker_save()
@@ -671,10 +683,11 @@ function resume_prompter.check(path)
     if not config.ask_resume or not path or path == "" or should_ignore_path(path) then return end
     if not config.log_urls and is_url(path) then return end
 
-    if config.resume_skip_playlist then
+    if not resume_prompt_forced and config.resume_skip_playlist then
         local playlist_pos = mp.get_property_number("playlist-pos", 0)
         if playlist_pos > 0 then return end
     end
+    resume_prompt_forced = false
 
     local entry = storage.get_entry(path)
     if not entry or not entry.pos then return end
@@ -926,8 +939,7 @@ local function uosc_build_menu(page_num)
             local display_title = exists and title or strikethrough(title)
             local hint_str = exists
                 and string.format("%s / %s  •  %s", pos_str, dur_str, rel_time)
-                title = string.format("{\\s1}%s{\\s0} {\\c&HFF6666&}[Deleted or Moved]", title)
-                title_color = "{\\c&H888888&}"
+                or string.format("[Deleted or Moved]  •  %s", rel_time)
             table.insert(menu_items, {
                 title = display_title,
                 hint = hint_str,
