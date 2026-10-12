@@ -1345,7 +1345,7 @@ local function seek_undo()
     end
 
     if seek_history.index <= 1 then
-        mp.osd_message("Janus: No previous seek to undo", 1.5)
+        mp.osd_message("↩ No previous seek to undo", 1.5)
         return
     end
 
@@ -1368,7 +1368,7 @@ local function seek_redo()
     if resume_prompter.is_active or vanilla_menu.is_open then return end
 
     if seek_history.index >= #seek_history.stack then
-        mp.osd_message("Janus: No seek to redo", 1.5)
+        mp.osd_message("↪ No seek to redo", 1.5)
         return
     end
 
