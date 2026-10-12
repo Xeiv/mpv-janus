@@ -66,24 +66,24 @@ If you want to customize them in `~/.config/mpv/input.conf`:
 
 ```conf
 # Open history (auto-detects uosc or vanilla OSD)
-h script-binding janus/open
+h 				script-binding janus/open						#! History > Playback History
 
 # Toggle tracking on/off
-Alt+h script-binding janus/toggle-tracking
+Alt+h 			script-binding janus/toggle-tracking            #! History > Toggle History
 
 # Hold to speed up / tap to pause (resumes last video when idle)
-SPACE script-binding janus/speed-hold
-MBTN_RIGHT script-binding janus/speed-hold
+SPACE 			script-binding janus/speed-hold
+MBTN_RIGHT 		script-binding janus/speed-hold
 
 # Resume the last played video explicitly
-ctrl+r script-binding janus/play-last
+ctrl+r 			script-binding janus/play-last
 
 # Toggle 2x speed on/off
-Alt+n script-binding janus/speed-toggle
+Alt+n 			script-binding janus/speed-toggle
 
 # Open specific menu styles
-H script-binding janus/history-vanilla
-ctrl+h script-binding janus/history-uosc
+H 				script-binding janus/history-vanilla
+ctrl+h 			script-binding janus/history-uosc
 ```
 
 ---
@@ -93,14 +93,16 @@ ctrl+h script-binding janus/history-uosc
 If you use **uosc**, you can integrate Janus directly into your menus and timeline buttons:
 
 ### Adding to uosc Menu
-Append `#! History` to your keybinding in `~/.config/mpv/input.conf`:
+Append `#! History > ...` to your keybinding in `~/.config/mpv/input.conf`:
 
 ```conf
-# Opens history and creates an entry in uosc's menu
-h script-binding janus/open #! History
+# Adds Playback History and Toggle History to a "History" submenu in uosc
+h      script-binding janus/open            #! History > Playback History
+Alt+h  script-binding janus/toggle-tracking #! History > Toggle History
 
-# Or add to uosc menu without binding a shortcut key:
-# script-binding janus/open #! History
+# Or add to uosc menu without binding shortcut keys:
+# script-binding janus/open            #! History > Playback History
+# script-binding janus/toggle-tracking #! History > Toggle History
 ```
 
 ### Adding a Button Above Timeline
