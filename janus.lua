@@ -458,31 +458,6 @@ local function record_history(entry)
 end
 
 -- Load and play a file from history
-local function play_last_played()
-    local page = storage.get_page(1, 10)
-    if not page or not page.items or #page.items == 0 then
-        mp.osd_message("Janus: No history entries found", 2)
-        return
-    end
-
-    local item = nil
-    for _, candidate in ipairs(page.items) do
-        if is_url(candidate.path) or file_exists(candidate.path) then
-            item = candidate
-            break
-        end
-    end
-
-    if not item then
-        mp.osd_message("Janus: Recent videos were moved or deleted", 3)
-        return
-    end
-
-    local name = item.title or get_filename(item.path)
-    mp.osd_message("Janus: Resuming " .. name, 2)
-    play_history_item(item)
-end
-
 local function play_history_item(item)
     if not item or not item.path then return end
 
@@ -518,6 +493,32 @@ local function play_history_item(item)
     else
         mp.commandv("loadfile", item.path, "replace")
     end
+end
+
+-- Resume the most recent valid video from history
+local function play_last_played()
+    local page = storage.get_page(1, 10)
+    if not page or not page.items or #page.items == 0 then
+        mp.osd_message("Janus: No history entries found", 2)
+        return
+    end
+
+    local item = nil
+    for _, candidate in ipairs(page.items) do
+        if is_url(candidate.path) or file_exists(candidate.path) then
+            item = candidate
+            break
+        end
+    end
+
+    if not item then
+        mp.osd_message("Janus: Recent videos were moved or deleted", 3)
+        return
+    end
+
+    local name = item.title or get_filename(item.path)
+    mp.osd_message("Janus: Resuming " .. name, 2)
+    play_history_item(item)
 end
 
 -- Save current playback position
@@ -1206,13 +1207,23 @@ local function speed_deactivate()
     is_speed_toggled = false
 end
 
+local is_idle_resuming = false
+
 local function handle_speed_key(event)
     if not config.speed_enabled then return end
     if resume_prompter.is_active or vanilla_menu.is_open then return end
 
+    if is_idle_resuming then
+        if event.event == "up" then
+            is_idle_resuming = false
+        end
+        return
+    end
+
     local current_path = mp.get_property("path")
     if not current_path or current_path == "" then
         if event.event == "down" and config.play_last_on_idle then
+            is_idle_resuming = true
             play_last_played()
         end
         return
