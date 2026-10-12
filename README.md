@@ -10,6 +10,7 @@ It keeps track of recently watched videos, lets you resume where you left off, a
 
 - **Fast & Lightweight**: Keeps track of recently watched videos without slowing down mpv. It uses pagination so it only loads a small page of items at a time instead of reading your whole history into memory.
 - **Resume Where You Left Off**: When you open a video you've watched before, Janus pops up a quick prompt asking if you want to resume where you left off or start from the beginning.
+- **Hold to Speed Up (YouTube Style)**: Press and hold `Space` to temporarily speed up playback to 2.0x. Releasing it smoothly restores normal speed, while a quick tap plays/pauses like normal.
 - **Toggle History Anytime**: Quickly turn history logging on or off on the fly by pressing `Alt+h`.
 - **Works with Vanilla mpv & uosc**: Automatically detects if you're using uosc and displays a native menu. If you're on standard mpv, it opens an on-screen menu with full keyboard controls.
 - **Smart History Tracking**: Ignores videos you open and quickly skip past (configurable, 5 seconds by default) so your history stays tidy.
@@ -52,6 +53,7 @@ cp janus.conf ~/.config/mpv/script-opts/
 Janus provides built-in default shortcuts:
 - **`h`**: Open the Janus history menu
 - **`Alt+h`**: Toggle history tracking on or off
+- **`Space`**: Tap to play/pause, hold to speed up to 2.0x
 
 If you want to customize them in `~/.config/mpv/input.conf`:
 
@@ -61,6 +63,12 @@ h script-binding janus/open
 
 # Toggle tracking on/off
 Alt+h script-binding janus/toggle-tracking
+
+# Hold to speed up / tap to pause
+SPACE script-binding janus/speed-hold
+
+# Toggle 2x speed on/off (optional)
+Alt+n script-binding janus/speed-toggle
 
 # Open specific menu styles
 H script-binding janus/history-vanilla
@@ -129,6 +137,9 @@ You can tweak options in `~/.config/mpv/script-opts/janus.conf`:
 | `resume_timeout` | `10` | Seconds to wait before auto-resuming (0 to disable) |
 | `resume_pause_on_prompt` | `yes` | Pause playback while asking to resume |
 | `ui_mode` | `auto` | `auto`, `uosc`, or `vanilla` |
+| `speed_enabled` | `yes` | Hold Spacebar to temporarily speed up (YouTube style) |
+| `speed_target` | `2.0` | Playback speed multiplier while holding Spacebar |
+| `speed_delay` | `0.3` | Seconds to hold Spacebar before speeding up activates |
 
 ---
 

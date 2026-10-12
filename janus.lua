@@ -46,6 +46,11 @@ local config = {
     -- Interface
     ui_mode = "auto",          -- "auto", "uosc", or "vanilla"
     page_size = 20,            -- Number of items per history page
+
+    -- Hold to speed up (YouTube style)
+    speed_enabled = true,      -- Hold Spacebar to temporarily speed up
+    speed_target = 2.0,        -- Playback speed multiplier while holding
+    speed_delay = 0.3,         -- Seconds to hold before speeding up activates
 }
 
 opt.read_options(config, "janus")
@@ -988,6 +993,9 @@ mp.observe_property("pause", "bool", function(_, paused)
 end)
 
 mp.register_event("end-file", function()
+    if speed_state and speed_state.is_speeding then
+        speed_deactivate()
+    end
     resume_prompter.cancel()
     if tracker.current.qualified then
         tracker_save()
@@ -1000,12 +1008,94 @@ end)
 tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)
 
 -- ============================================================================
--- 8. Keybindings & Script Messages
+-- 8. Hold to Speed Up (YouTube Style)
 -- ============================================================================
 
--- Keybindings (defaults: 'h' opens history, 'Alt+h' toggles tracking)
+---@class SpeedState
+---@field is_speeding boolean
+---@field was_paused boolean
+---@field normal_speed number
+---@field timer any
+local speed_state = {
+    is_speeding = false,
+    was_paused = false,
+    normal_speed = 1.0,
+    timer = nil,
+}
+
+local function speed_activate()
+    speed_state.is_speeding = true
+    speed_state.normal_speed = mp.get_property_native("speed") or 1.0
+    speed_state.was_paused = mp.get_property_native("pause") or false
+
+    if speed_state.was_paused then
+        mp.set_property_native("pause", false)
+    end
+
+    mp.set_property("speed", config.speed_target)
+    mp.osd_message(string.format("⏩ %.1fx Speed", config.speed_target), 99999)
+end
+
+local function speed_deactivate()
+    if speed_state.timer then
+        speed_state.timer:kill()
+        speed_state.timer = nil
+    end
+
+    if speed_state.is_speeding then
+        mp.set_property("speed", speed_state.normal_speed)
+        if speed_state.was_paused then
+            mp.set_property_native("pause", true)
+        end
+        mp.osd_message("▶️ Normal Speed", 1)
+        speed_state.is_speeding = false
+    end
+end
+
+local function handle_speed_key(event)
+    if not config.speed_enabled then return end
+    if resume_prompter.is_active or vanilla_menu.is_open then return end
+
+    if event.event == "down" then
+        if not speed_state.timer and not speed_state.is_speeding then
+            speed_state.timer = mp.add_timeout(config.speed_delay, speed_activate)
+        end
+    elseif event.event == "up" then
+        if speed_state.timer then
+            speed_state.timer:kill()
+            speed_state.timer = nil
+        end
+
+        if speed_state.is_speeding then
+            speed_deactivate()
+        else
+            -- Quick tap (under speed_delay): toggle play/pause
+            local paused = mp.get_property_native("pause")
+            mp.set_property_native("pause", not paused)
+        end
+    end
+end
+
+local function toggle_speed()
+    if speed_state.is_speeding then
+        speed_deactivate()
+    else
+        speed_activate()
+    end
+end
+
+-- ============================================================================
+-- 9. Keybindings & Script Messages
+-- ============================================================================
+
+-- Keybindings (defaults: 'h' opens history, 'Alt+h' toggles tracking, 'Space' hold-to-speed)
 mp.add_key_binding("h", "open", function() ui.open() end)
 mp.add_key_binding("Alt+h", "toggle-tracking", toggle_tracking)
+if config.speed_enabled then
+    mp.add_forced_key_binding("SPACE", "speed-hold", handle_speed_key, {complex = true})
+end
+mp.add_key_binding(nil, "speed-hold", handle_speed_key, {complex = true})
+mp.add_key_binding(nil, "speed-toggle", toggle_speed)
 mp.add_key_binding(nil, "toggle", function() ui.toggle() end)
 mp.add_key_binding(nil, "history", function() ui.open() end)
 mp.add_key_binding(nil, "history-vanilla", function() vanilla_menu.open() end)
@@ -1049,5 +1139,7 @@ mp.register_script_message("compact", function()
         msg.info(string.format("Janus: history compacted (%d items retained)", count or 0))
     end
 end)
+
+mp.register_script_message("speed-toggle", toggle_speed)
 
 msg.info("Janus initialized successfully")
