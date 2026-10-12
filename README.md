@@ -10,7 +10,10 @@ It keeps track of recently watched videos, lets you resume where you left off, a
 
 In Roman mythology, **Janus** is the god of beginnings, transitions, and time—traditionally depicted with two faces: one looking back into the past, and one looking forward into the future.
 
-The plugin was built with that exact duality in mind: one face remembers where you've been (logging your playback history), while the other looks ahead to pick up right where you left off (smart resume).
+The plugin was built with that exact duality in mind:
+- **Looking back**: Remembering where you've been by quietly logging your playback history.
+- **Looking forward**: Picking up right where you left off with smart resume prompts and idle playback.
+- **Bending time**: Giving you effortless control over the flow of time itself—holding to speed through slow moments at 2x and instantly snapping back to normal the moment you let go.
 
 ---
 
