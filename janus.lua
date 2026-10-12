@@ -1023,7 +1023,9 @@ local speed_state = {
     timer = nil,
 }
 
-local function speed_activate()
+local is_speed_toggled = false
+
+local function speed_activate(is_toggle)
     speed_state.is_speeding = true
     speed_state.normal_speed = mp.get_property_native("speed") or 1.0
     speed_state.was_paused = mp.get_property_native("pause") or false
@@ -1033,7 +1035,12 @@ local function speed_activate()
     end
 
     mp.set_property("speed", config.speed_target)
-    mp.osd_message(string.format("⏩ %.1fx Speed", config.speed_target), 99999)
+    if is_toggle then
+        mp.osd_message(string.format("⏩ %.1fx Speed (Toggled)", config.speed_target), 99999)
+        is_speed_toggled = true
+    else
+        mp.osd_message(string.format("⏩ %.1fx Speed", config.speed_target), 99999)
+    end
 end
 
 local function speed_deactivate()
@@ -1050,6 +1057,7 @@ local function speed_deactivate()
         mp.osd_message("▶️ Normal Speed", 1)
         speed_state.is_speeding = false
     end
+    is_speed_toggled = false
 end
 
 local function handle_speed_key(event)
@@ -1077,10 +1085,10 @@ local function handle_speed_key(event)
 end
 
 local function toggle_speed()
-    if speed_state.is_speeding then
+    if is_speed_toggled or speed_state.is_speeding then
         speed_deactivate()
     else
-        speed_activate()
+        speed_activate(true)
     end
 end
 
@@ -1088,11 +1096,13 @@ end
 -- 9. Keybindings & Script Messages
 -- ============================================================================
 
--- Keybindings (defaults: 'h' opens history, 'Alt+h' toggles tracking, 'Space' hold-to-speed)
+-- Keybindings (defaults: 'h' opens history, 'Alt+h' toggles tracking, Space/Right-Click hold to speed, Alt+n toggle)
 mp.add_key_binding("h", "open", function() ui.open() end)
 mp.add_key_binding("Alt+h", "toggle-tracking", toggle_tracking)
 if config.speed_enabled then
-    mp.add_forced_key_binding("SPACE", "speed-hold", handle_speed_key, {complex = true})
+    mp.add_forced_key_binding("SPACE", "speed-hold-space", handle_speed_key, {complex = true})
+    mp.add_forced_key_binding("MBTN_RIGHT", "speed-hold-mouse", handle_speed_key, {complex = true})
+    mp.add_forced_key_binding("Alt+n", "speed-toggle-key", toggle_speed)
 end
 mp.add_key_binding(nil, "speed-hold", handle_speed_key, {complex = true})
 mp.add_key_binding(nil, "speed-toggle", toggle_speed)
