@@ -30,7 +30,7 @@ local config = {
 
     -- Logging rules
     watch_threshold = 5,       -- Minimum seconds played before saving to history
-    update_interval = 30,      -- Seconds between periodic progress updates
+    update_interval = 15,      -- Seconds between periodic progress updates
     save_on_pause = true,      -- Save current position when pausing
     log_urls = true,           -- Whether to record web URLs/streams
     resume_offset = 0,         -- Seconds before saved position when resuming

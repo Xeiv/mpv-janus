@@ -32,6 +32,8 @@ cp janus.lua ~/.config/mpv/scripts/
 # Copy janus.lua to: %APPDATA%/mpv/scripts/
 ```
 
+> **Tip**: If you have `save-position-on-quit=yes` in your `mpv.conf`, you can safely disable or remove it. Janus saves your playback progress continuously (every 15 seconds and on pause) and handles resume prompts without conflicts.
+
 ### 2. Configuration (Optional)
 If you want to customize settings, drop `janus.conf` into your `script-opts` directory:
 
@@ -120,7 +122,10 @@ You can tweak options in `~/.config/mpv/script-opts/janus.conf`:
 | `history_file` | `~~/janus_history.jsonl` | Where your history log is saved |
 | `page_size` | `20` | Number of videos displayed per page |
 | `watch_threshold` | `5` | Minimum seconds watched before saving to history |
+| `update_interval` | `15` | Seconds between periodic progress updates |
 | `ask_resume` | `yes` | Ask to resume when loading a previous video |
+| `resume_threshold` | `10` | Minimum saved position (in seconds) to show resume prompt |
+| `resume_end_threshold` | `15` | Ignore resume prompt if within this many seconds from the end |
 | `resume_timeout` | `10` | Seconds to wait before auto-resuming (0 to disable) |
 | `resume_pause_on_prompt` | `yes` | Pause playback while asking to resume |
 | `ui_mode` | `auto` | `auto`, `uosc`, or `vanilla` |
