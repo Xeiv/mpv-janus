@@ -10,7 +10,10 @@ It keeps track of recently watched videos, lets you resume where you left off, a
 
 - **Fast & Lightweight**: Keeps track of recently watched videos without slowing down mpv. It uses pagination so it only loads a small page of items at a time instead of reading your whole history into memory.
 - **Resume Where You Left Off**: When you open a video you've watched before, Janus pops up a quick prompt asking if you want to resume where you left off or start from the beginning.
-- **Hold to Speed Up (YouTube Style)**: Press and hold `Space` or `Right Click` to temporarily speed up playback to 2.0x. Releasing it smoothly restores normal speed, while a quick tap plays/pauses. You can also toggle 2.0x speed anytime with `Alt+n`.
+- **Smart 95% Completion Rule**: Automatically skips the resume prompt and restarts from the beginning if you previously finished the video or left during the end credits (configurable threshold and 95% rule).
+- **Hold to Speed Up (YouTube Style)**: Press and hold `Space` or `Right Click` to temporarily speed up playback to 2.0x with audio pitch correction kept intact. Releasing it smoothly restores normal speed, while a quick tap plays/pauses. You can also toggle 2.0x speed anytime with `Alt+n`.
+- **Hover to Delete (uosc)**: In uosc, hover over any item in your history menu to reveal a delete button to remove it instantly.
+- **Folder Blacklist**: Exclude specific directories or temporary download folders from ever being saved to history.
 - **Toggle History Anytime**: Quickly turn history logging on or off on the fly by pressing `Alt+h`.
 - **Works with Vanilla mpv & uosc**: Automatically detects if you're using uosc and displays a native menu. If you're on standard mpv, it opens an on-screen menu with full keyboard controls.
 - **Smart History Tracking**: Ignores videos you open and quickly skip past (configurable, 5 seconds by default) so your history stays tidy.
@@ -131,12 +134,15 @@ You can tweak options in `~/.config/mpv/script-opts/janus.conf`:
 | :--- | :--- | :--- |
 | `enabled` | `yes` | Master switch: enable or disable history tracking |
 | `history_file` | `~~/janus_history.jsonl` | Where your history log is saved |
+| `ignore_paths` | `""` | Folders to ignore (semicolon or comma separated) |
 | `page_size` | `20` | Number of videos displayed per page |
 | `watch_threshold` | `5` | Minimum seconds watched before saving to history |
 | `update_interval` | `15` | Seconds between periodic progress updates |
 | `ask_resume` | `yes` | Ask to resume when loading a previous video |
 | `resume_threshold` | `10` | Minimum saved position (in seconds) to show resume prompt |
 | `resume_end_threshold` | `15` | Ignore resume prompt if within this many seconds from the end |
+| `resume_end_percent` | `95` | Ignore resume prompt if watched past this percent (95% rule) |
+| `resume_skip_playlist` | `no` | Skip resume prompt on playlist auto-advance (binge mode) |
 | `resume_timeout` | `10` | Seconds to wait before auto-resuming (0 to disable) |
 | `resume_pause_on_prompt` | `yes` | Pause playback while asking to resume |
 | `ui_mode` | `auto` | `auto`, `uosc`, or `vanilla` |

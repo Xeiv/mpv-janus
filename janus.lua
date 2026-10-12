@@ -34,11 +34,14 @@ local config = {
     save_on_pause = true,      -- Save current position when pausing
     log_urls = true,           -- Whether to record web URLs/streams
     resume_offset = 0,         -- Seconds before saved position when resuming
+    ignore_paths = "",           -- Paths or folders to ignore (semicolon or comma separated)
 
     -- Resume prompt
     ask_resume = true,                 -- Ask to resume playback when loading a file
     resume_threshold = 10,             -- Minimum saved position (seconds) to trigger prompt
     resume_end_threshold = 15,         -- Ignore if within this many seconds from duration end
+    resume_end_percent = 95,           -- Ignore if progress is past this percentage (95% rule)
+    resume_skip_playlist = false,      -- Skip resume prompt on playlist auto-advance
     resume_timeout = 10,               -- Countdown timeout in seconds (0 to disable)
     resume_timeout_action = "resume",  -- Action on timeout: "resume" or "beginning"
     resume_pause_on_prompt = true,     -- Pause playback while resume prompt is active
@@ -112,6 +115,21 @@ end
 local function is_url(path)
     if not path then return false end
     return path:match("^%a[%w+.-]*://") ~= nil
+end
+
+-- Check if a path matches ignored folder or directory patterns
+local function should_ignore_path(path)
+    if not path or path == "" then return true end
+    if config.ignore_paths and config.ignore_paths ~= "" then
+        local lower_path = path:lower()
+        for pattern in string.gmatch(config.ignore_paths, "[^;,]+") do
+            local trimmed = pattern:match("^%s*(.-)%s*$"):lower()
+            if trimmed ~= "" and lower_path:find(trimmed, 1, true) then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 -- Escape characters for safe ASS text rendering
@@ -404,7 +422,7 @@ local resume_prompter
 
 -- Save current video info to history
 local function record_history(entry)
-    if not tracking_enabled or not entry or not entry.path then return false end
+    if not tracking_enabled or not entry or not entry.path or should_ignore_path(entry.path) then return false end
     if not entry.title or entry.title == "" then
         entry.title = get_filename(entry.path)
     end
@@ -421,9 +439,13 @@ local function play_history_item(item)
     local pos = item.pos or 0
     local start_pos = math.max(0, pos - config.resume_offset)
 
-    -- If position is right near the end, start from the beginning instead
-    if item.duration and item.duration > 30 and (item.duration - start_pos) < 10 then
-        start_pos = 0
+    -- If position is right near the end (15s or 95% finished), start from beginning instead
+    if item.duration and item.duration > 0 then
+        local remaining = item.duration - start_pos
+        local percent = (start_pos / item.duration) * 100
+        if remaining < config.resume_end_threshold or percent >= config.resume_end_percent then
+            start_pos = 0
+        end
     end
 
     local current_path = mp.get_property("path")
@@ -445,7 +467,7 @@ end
 
 -- Save current playback position
 local function tracker_save()
-    if not tracking_enabled or resume_prompter.is_active or not tracker.current.path or not tracker.current.qualified then
+    if not tracking_enabled or resume_prompter.is_active or not tracker.current.path or not tracker.current.qualified or should_ignore_path(tracker.current.path) then
         return
     end
 
@@ -467,7 +489,7 @@ end
 
 -- Heartbeat timer: counts active watch time
 local function tracker_on_tick()
-    if not tracking_enabled or resume_prompter.is_active or tracker.is_paused or not tracker.current.path then
+    if not tracking_enabled or resume_prompter.is_active or tracker.is_paused or not tracker.current.path or should_ignore_path(tracker.current.path) then
         return
     end
 
@@ -621,8 +643,13 @@ end
 
 -- Check if opened video has saved progress and show prompt if so
 function resume_prompter.check(path)
-    if not config.ask_resume or not path or path == "" then return end
+    if not config.ask_resume or not path or path == "" or should_ignore_path(path) then return end
     if not config.log_urls and is_url(path) then return end
+
+    if config.resume_skip_playlist then
+        local playlist_pos = mp.get_property_number("playlist-pos", 0)
+        if playlist_pos > 0 then return end
+    end
 
     local entry = storage.get_entry(path)
     if not entry or not entry.pos then return end
@@ -631,7 +658,13 @@ function resume_prompter.check(path)
     if pos < config.resume_threshold then return end
 
     local duration = tonumber(entry.duration) or 0
-    if duration > 0 and (duration - pos) < config.resume_end_threshold then return end
+    if duration > 0 then
+        local remaining = duration - pos
+        local percent = (pos / duration) * 100
+        if remaining < config.resume_end_threshold or percent >= config.resume_end_percent then
+            return
+        end
+    end
 
     local current_pos = mp.get_property_number("time-pos", 0)
     if math.abs(current_pos - pos) < 2 then return end
@@ -844,10 +877,13 @@ function vanilla_menu.open()
 end
 
 -- uosc menu integration
-local uosc_menu = {}
+local uosc_menu = {
+    current_page = 1,
+}
 
 -- Build menu structure for uosc
 local function uosc_build_menu(page_num)
+    uosc_menu.current_page = page_num
     local page_data = storage.get_page(page_num)
     local items = page_data.items
     local now = os.time()
@@ -872,10 +908,17 @@ local function uosc_build_menu(page_num)
                 hint = string.format("%s / %s  •  %s", pos_str, dur_str, rel_time),
                 icon = "history",
                 value = {
-                    "script-message-to", "janus", "play",
-                    item.path,
-                    tostring(item.pos or 0),
-                    tostring(item.duration or 0),
+                    action = "play",
+                    path = item.path,
+                    pos = tonumber(item.pos) or 0,
+                    duration = tonumber(item.duration) or 0,
+                },
+                actions = {
+                    {
+                        name = "delete",
+                        icon = "delete",
+                        label = "Delete from history",
+                    },
                 },
             })
         end
@@ -888,7 +931,10 @@ local function uosc_build_menu(page_num)
             align = "center",
             bold = true,
             keep_open = true,
-            value = {"script-message-to", "janus", "uosc-page", tostring(page_num - 1)},
+            value = {
+                action = "page",
+                page = page_num - 1,
+            },
         })
     end
 
@@ -899,25 +945,31 @@ local function uosc_build_menu(page_num)
             align = "center",
             bold = true,
             keep_open = true,
-            value = {"script-message-to", "janus", "uosc-page", tostring(page_num + 1)},
+            value = {
+                action = "page",
+                page = page_num + 1,
+            },
         })
     end
 
     return {
         type = "janus_history",
         title = string.format("History — Page %d", page_num),
+        callback = {"janus", "uosc-event"},
         items = menu_items,
     }
 end
 
 function uosc_menu.open(page_num)
     page_num = page_num or 1
+    uosc_menu.current_page = page_num
     local json = utils.format_json(uosc_build_menu(page_num))
     mp.commandv("script-message-to", "uosc", "open-menu", json)
 end
 
 function uosc_menu.update(page_num)
-    page_num = page_num or 1
+    page_num = page_num or uosc_menu.current_page or 1
+    uosc_menu.current_page = page_num
     local json = utils.format_json(uosc_build_menu(page_num))
     mp.commandv("script-message-to", "uosc", "update-menu", json)
 end
@@ -962,7 +1014,7 @@ end)
 
 mp.register_event("file-loaded", function()
     local path = mp.get_property("path")
-    if not path or path == "" then
+    if not path or path == "" or should_ignore_path(path) then
         tracker.current.path = nil
         return
     end
@@ -1026,11 +1078,13 @@ tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)
 ---@field was_paused boolean
 ---@field normal_speed number
 ---@field timer any
+---@field orig_pitch_correction? boolean
 local speed_state = {
     is_speeding = false,
     was_paused = false,
     normal_speed = 1.0,
     timer = nil,
+    orig_pitch_correction = nil,
 }
 
 local is_speed_toggled = false
@@ -1039,6 +1093,12 @@ local function speed_activate(is_toggle)
     speed_state.is_speeding = true
     speed_state.normal_speed = mp.get_property_native("speed") or 1.0
     speed_state.was_paused = mp.get_property_native("pause") or false
+
+    -- Safeguard: ensure audio pitch correction is enabled during speed-up
+    speed_state.orig_pitch_correction = mp.get_property_native("audio-pitch-correction")
+    if speed_state.orig_pitch_correction == false then
+        mp.set_property_native("audio-pitch-correction", true)
+    end
 
     if speed_state.was_paused then
         mp.set_property_native("pause", false)
@@ -1061,6 +1121,9 @@ local function speed_deactivate()
 
     if speed_state.is_speeding then
         mp.set_property("speed", speed_state.normal_speed)
+        if speed_state.orig_pitch_correction == false then
+            mp.set_property_native("audio-pitch-correction", false)
+        end
         if speed_state.was_paused then
             mp.set_property_native("pause", true)
         end
@@ -1128,6 +1191,32 @@ mp.register_script_message("toggle-tracking", toggle_tracking)
 mp.register_script_message("open-vanilla", function() vanilla_menu.open() end)
 mp.register_script_message("open-uosc", function(page) uosc_menu.open(tonumber(page) or 1) end)
 mp.register_script_message("uosc-page", function(page) uosc_menu.update(tonumber(page) or 1) end)
+
+mp.register_script_message("uosc-event", function(json_str)
+    local event = utils.parse_json(json_str)
+    if not event or event.type ~= "activate" then return end
+
+    local val = event.value
+    if event.action == "delete" then
+        local path = val and val.path
+        if path then
+            storage.remove(path)
+            msg.info("Janus: removed from history: " .. path)
+            uosc_menu.update(uosc_menu.current_page or 1)
+        end
+    elseif val and type(val) == "table" then
+        if val.action == "page" then
+            uosc_menu.update(val.page)
+        elseif val.action == "play" then
+            mp.commandv("script-message-to", "uosc", "close-menu", "janus_history")
+            play_history_item({
+                path = val.path,
+                pos = val.pos,
+                duration = val.duration,
+            })
+        end
+    end
+end)
 
 mp.register_script_message("resume-action", function(action)
     resume_prompter.handle_action(action)
