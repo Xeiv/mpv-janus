@@ -410,6 +410,57 @@ function storage.check_compaction()
     end
 end
 
+function storage.prune_missing()
+    local entries = {}
+    local seen = {}
+    local pruned_count = 0
+
+    reverse_scan_lines(8192, function(line)
+        local ok_json, entry = pcall(utils.parse_json, line)
+        if ok_json and type(entry) == "table" and entry.path then
+            if not seen[entry.path] then
+                seen[entry.path] = true
+                if not entry.deleted then
+                    if is_url(entry.path) or file_exists(entry.path) then
+                        table.insert(entries, entry)
+                    else
+                        pruned_count = pruned_count + 1
+                    end
+                end
+            end
+        end
+    end)
+
+    if pruned_count == 0 then
+        return 0
+    end
+
+    local count = #entries
+    for i = 1, math.floor(count / 2) do
+        entries[i], entries[count - i + 1] = entries[count - i + 1], entries[i]
+    end
+
+    local tmp_path = history_path .. ".tmp"
+    local f = io.open(tmp_path, "w")
+    if not f then return 0 end
+
+    for _, item in ipairs(entries) do
+        f:write(utils.format_json(item) .. "\n")
+    end
+    f:close()
+
+    if not os.rename(tmp_path, history_path) then
+        mp.command_native({
+            name = "subprocess",
+            args = {"mv", "-f", tmp_path, history_path},
+            playback_only = false,
+        })
+    end
+
+    storage.append_count = 0
+    return pruned_count
+end
+
 function storage.search(query, max_results)
     if not query or query == "" then return {} end
     query = query:lower()
@@ -796,6 +847,7 @@ local vanilla_menu = {
     current_page = 1,
     page_data = nil,
     selected_index = 1,
+    confirm_mode = nil,
     overlay = nil,
     key_bindings = {},
 }
@@ -804,6 +856,24 @@ local function vanilla_render()
     if not vanilla_menu.is_open then return end
     if not vanilla_menu.overlay then
         vanilla_menu.overlay = mp.create_osd_overlay("ass-events")
+    end
+
+    if vanilla_menu.confirm_mode == "prune" then
+        vanilla_menu.overlay.data = "{\\an5\\bord2\\shad2\\fs20\\c&HFFFFFF&}"
+            .. "{\\b1\\fs26\\c&H00D7FF&}PRUNE MISSING FILES?{\\c&HFFFFFF&\\b0}\\N\\N"
+            .. "{\\fs18\\c&HD0D0D0&}Remove all moved or deleted files from history?\\N\\N"
+            .. "{\\fs16\\c&HFFFFFF&}[Enter] {\\b1}Prune{\\b0}      [Esc] {\\b1}Cancel{\\b0}"
+        vanilla_menu.overlay:update()
+        return
+    end
+
+    if vanilla_menu.confirm_mode == "clear" then
+        vanilla_menu.overlay.data = "{\\an5\\bord2\\shad2\\fs20\\c&HFFFFFF&}"
+            .. "{\\b1\\fs26\\c&H0055FF&}CLEAR ALL HISTORY?{\\c&HFFFFFF&\\b0}\\N\\N"
+            .. "{\\fs18\\c&HD0D0D0&}Permanently delete all playback history?\\N\\N"
+            .. "{\\fs16\\c&HFFFFFF&}[Enter] {\\b1}Clear All{\\b0}      [Esc] {\\b1}Cancel{\\b0}"
+        vanilla_menu.overlay:update()
+        return
     end
 
     local page = vanilla_menu.page_data or { items = {}, page = 1, has_prev = false, has_next = false }
@@ -856,7 +926,7 @@ local function vanilla_render()
     end
 
     local footer = "{\\fs14\\c&H777777&}------------------------------------------------------------\\N"
-        .. "{\\fs14\\c&HAAAAAA&}[↑/↓] Select   [Enter] Play   [←/→] Page   [Del] Delete   [Esc/q] Close"
+        .. "{\\fs14\\c&HAAAAAA&}[↑/↓] Select   [Enter] Play   [←/→] Page   [Del] Delete   [p] Prune   [c] Clear   [Esc/q] Close"
     table.insert(lines, footer)
 
     vanilla_menu.overlay.data = table.concat(lines)
@@ -881,6 +951,7 @@ end
 function vanilla_menu.close()
     if not vanilla_menu.is_open then return end
     vanilla_menu.is_open = false
+    vanilla_menu.confirm_mode = nil
     for name, _ in pairs(vanilla_menu.key_bindings) do
         mp.remove_key_binding(name)
     end
@@ -938,6 +1009,24 @@ function vanilla_menu.open()
     bind("h", "janus_v_h", function() mp.commandv("keypress", "LEFT") end)
     bind("l", "janus_v_l", function() mp.commandv("keypress", "RIGHT") end)
     bind("ENTER", "janus_v_enter", function()
+        if vanilla_menu.confirm_mode == "prune" then
+            local count = storage.prune_missing()
+            if count == 0 then
+                mp.osd_message("Janus: No missing files found", 2)
+            else
+                mp.osd_message(string.format("Janus: Pruned %d missing file%s", count, count == 1 and "" or "s"), 2)
+            end
+            vanilla_menu.confirm_mode = nil
+            vanilla_refresh()
+            return
+        elseif vanilla_menu.confirm_mode == "clear" then
+            storage.clear()
+            mp.osd_message("Janus: Playback history cleared", 2)
+            vanilla_menu.confirm_mode = nil
+            vanilla_refresh()
+            return
+        end
+
         local items = vanilla_menu.page_data and vanilla_menu.page_data.items or {}
         local item = items[vanilla_menu.selected_index]
         if item then
@@ -949,7 +1038,16 @@ function vanilla_menu.open()
             play_history_item(item)
         end
     end)
+    bind("p", "janus_v_prune", function()
+        vanilla_menu.confirm_mode = "prune"
+        vanilla_render()
+    end)
+    bind("c", "janus_v_clear", function()
+        vanilla_menu.confirm_mode = "clear"
+        vanilla_render()
+    end)
     bind("DEL", "janus_v_del", function()
+        if vanilla_menu.confirm_mode then return end
         local items = vanilla_menu.page_data and vanilla_menu.page_data.items or {}
         local item = items[vanilla_menu.selected_index]
         if item then
@@ -958,8 +1056,22 @@ function vanilla_menu.open()
         end
     end)
     bind("BS", "janus_v_bs", function() mp.commandv("keypress", "DEL") end)
-    bind("ESC", "janus_v_esc", vanilla_menu.close)
-    bind("q", "janus_v_q", vanilla_menu.close)
+    bind("ESC", "janus_v_esc", function()
+        if vanilla_menu.confirm_mode then
+            vanilla_menu.confirm_mode = nil
+            vanilla_render()
+        else
+            vanilla_menu.close()
+        end
+    end)
+    bind("q", "janus_v_q", function()
+        if vanilla_menu.confirm_mode then
+            vanilla_menu.confirm_mode = nil
+            vanilla_render()
+        else
+            vanilla_menu.close()
+        end
+    end)
 
     vanilla_refresh()
 end
@@ -1085,6 +1197,28 @@ local function uosc_build_menu(page_num, query)
             },
         })
     end
+
+    table.insert(menu_items, {
+        separator = true,
+    })
+    table.insert(menu_items, {
+        title = "Prune Missing Files",
+        hint = "Remove deleted or moved videos",
+        icon = "delete_sweep",
+        keep_open = true,
+        value = {
+            action = "confirm_prune",
+        },
+    })
+    table.insert(menu_items, {
+        title = "Clear All History",
+        hint = "Permanently erase watch history",
+        icon = "delete_forever",
+        keep_open = true,
+        value = {
+            action = "confirm_clear",
+        },
+    })
 
     return {
         type = "janus_history",
@@ -1511,7 +1645,62 @@ mp.register_script_message("uosc-event", function(json_str)
             end
         end
     elseif val and type(val) == "table" then
-        if val.action == "page" then
+        if val.action == "confirm_prune" then
+            local confirm_menu = {
+                type = "janus_confirm",
+                title = "Prune Missing Files?",
+                footnote = "Remove all deleted or moved files from history.",
+                callback = {"janus", "uosc-event"},
+                items = {
+                    {
+                        title = "Yes, prune missing files",
+                        icon = "delete_sweep",
+                        value = { action = "do_prune" },
+                    },
+                    {
+                        title = "Cancel",
+                        icon = "close",
+                        value = { action = "cancel_confirm" },
+                    },
+                },
+            }
+            mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json(confirm_menu))
+        elseif val.action == "confirm_clear" then
+            local confirm_menu = {
+                type = "janus_confirm",
+                title = "Clear All History?",
+                footnote = "Permanently delete all playback history. This cannot be undone.",
+                callback = {"janus", "uosc-event"},
+                items = {
+                    {
+                        title = "Yes, clear all history",
+                        icon = "delete_forever",
+                        bold = true,
+                        value = { action = "do_clear" },
+                    },
+                    {
+                        title = "Cancel",
+                        icon = "close",
+                        value = { action = "cancel_confirm" },
+                    },
+                },
+            }
+            mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json(confirm_menu))
+        elseif val.action == "do_prune" then
+            local count = storage.prune_missing()
+            if count == 0 then
+                mp.osd_message("Janus: No missing files found", 2)
+            else
+                mp.osd_message(string.format("Janus: Pruned %d missing file%s", count, count == 1 and "" or "s"), 2)
+            end
+            uosc_menu.update(1)
+        elseif val.action == "do_clear" then
+            storage.clear()
+            mp.osd_message("Janus: Playback history cleared", 2)
+            uosc_menu.update(1)
+        elseif val.action == "cancel_confirm" then
+            uosc_menu.update(uosc_menu.current_page or 1)
+        elseif val.action == "page" then
             uosc_menu.search_query = nil
             uosc_menu.update(val.page)
         elseif val.action == "play" then

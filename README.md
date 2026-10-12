@@ -29,6 +29,7 @@ The name fits the script's core features:
 - **uosc & vanilla OSD support**: Automatically detects if you use uosc and renders a native menu with hover-to-delete and live full-history search. On standard mpv, it opens a clean on-screen display with arrow key navigation and pagination.
 - **Progress percentage**: Every entry shows your exact timestamp, total duration, percent watched, and how long ago you watched it (e.g. `14:20 / 28:00 (51%) • 2h ago`).
 - **Full-history search (uosc)**: Start typing inside the history menu to instantly search through your entire history log across all past videos (not just the current page).
+- **Prune & clear with confirmation**: Clean up all missing/moved files at once with **Prune Missing Files**, or erase your history with **Clear All History**—both guarded by confirmation dialogs so nothing is deleted by accident.
 - **Folder blacklist**: Ignore folders you don't want tracked (like downloads, temp directories, or private folders).
 - **Distraction-free OSD**: Frequent playback actions (speeding up, undoing seeks) use small, quiet HUD icons (`⏩`, `↩`) so they don't block the video. Script warnings and status changes use `Janus:` so you know where they came from.
 
@@ -139,10 +140,12 @@ When the resume overlay appears on an unfinished video:
 
 ### Vanilla Menu Navigation
 - **`↑` / `↓`** (or **`k` / `j`**): Move cursor up/down.
-- **`Enter`**: Play selected item.
+- **`Enter`**: Play selected item (or confirm action).
 - **`←` / `→`** (or **`h` / `l`**): Previous / next page.
-- **`Del`** / **`Backspace`**: Delete item from history.
-- **`Esc`** / **`q`**: Close menu.
+- **`Del`** / **`Backspace`**: Delete single item from history.
+- **`p`**: Prune all missing/deleted files from history (with confirmation).
+- **`c`**: Clear all history (with confirmation).
+- **`Esc`** / **`q`**: Close menu (or cancel confirmation).
 
 ---
 
