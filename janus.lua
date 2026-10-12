@@ -13,6 +13,7 @@ local config = {
     save_on_pause = true,
     log_urls = true,
     resume_offset = 0,
+    ui_mode = "auto",
 }
 
 opt.read_options(config, "janus")
@@ -345,7 +346,9 @@ local function tracker_on_tick()
     end
 end
 
--- Vanilla OSD Menu
+-- UI Modules
+local ui = { has_uosc = false }
+
 local vanilla_menu = {
     is_open = false,
     current_page = 1,
@@ -498,6 +501,115 @@ function vanilla_menu.open()
     vanilla_refresh()
 end
 
+local uosc_menu = {}
+
+local function uosc_build_menu(page_num)
+    local page_data = storage.get_page(page_num)
+    local items = page_data.items
+    local now = os.time()
+    local menu_items = {}
+
+    if #items == 0 then
+        table.insert(menu_items, {
+            title = "No history entries found",
+            italic = true,
+            align = "center",
+            selectable = false,
+        })
+    else
+        for _, item in ipairs(items) do
+            local title = item.title or get_filename(item.path)
+            local pos_str = format_duration(item.pos or 0)
+            local dur_str = format_duration(item.duration or 0)
+            local rel_time = format_relative_time(item.time, now)
+
+            table.insert(menu_items, {
+                title = title,
+                hint = string.format("%s / %s  •  %s", pos_str, dur_str, rel_time),
+                icon = "history",
+                value = {
+                    "script-message-to", "janus", "play",
+                    item.path,
+                    tostring(item.pos or 0),
+                    tostring(item.duration or 0),
+                },
+            })
+        end
+    end
+
+    if page_data.has_prev then
+        table.insert(menu_items, {
+            title = string.format("◀ Previous Page (Page %d)", page_num - 1),
+            icon = "navigate_before",
+            align = "center",
+            bold = true,
+            keep_open = true,
+            value = {"script-message-to", "janus", "uosc-page", tostring(page_num - 1)},
+        })
+    end
+
+    if page_data.has_next then
+        table.insert(menu_items, {
+            title = string.format("Next Page ▶ (Page %d)", page_num + 1),
+            icon = "navigate_next",
+            align = "center",
+            bold = true,
+            keep_open = true,
+            value = {"script-message-to", "janus", "uosc-page", tostring(page_num + 1)},
+        })
+    end
+
+    return {
+        type = "janus_history",
+        title = string.format("History — Page %d", page_num),
+        items = menu_items,
+    }
+end
+
+function uosc_menu.open(page_num)
+    page_num = page_num or 1
+    local json = utils.format_json(uosc_build_menu(page_num))
+    mp.commandv("script-message-to", "uosc", "open-menu", json)
+end
+
+function uosc_menu.update(page_num)
+    page_num = page_num or 1
+    local json = utils.format_json(uosc_build_menu(page_num))
+    mp.commandv("script-message-to", "uosc", "update-menu", json)
+end
+
+function ui.open(page_num)
+    local mode = config.ui_mode or "auto"
+    if mode == "vanilla" then
+        vanilla_menu.open()
+    elseif mode == "uosc" then
+        uosc_menu.open(page_num or 1)
+    else
+        if ui.has_uosc then
+            uosc_menu.open(page_num or 1)
+        else
+            vanilla_menu.open()
+        end
+    end
+end
+
+function ui.toggle()
+    local mode = config.ui_mode or "auto"
+    if mode == "vanilla" or (mode == "auto" and not ui.has_uosc) then
+        if vanilla_menu.is_open then
+            vanilla_menu.close()
+        else
+            vanilla_menu.open()
+        end
+    else
+        uosc_menu.open(1)
+    end
+end
+
+mp.register_script_message("uosc-version", function()
+    ui.has_uosc = true
+end)
+
 mp.register_event("file-loaded", function()
     local path = mp.get_property("path")
     if not path or path == "" then
@@ -545,6 +657,43 @@ end)
 
 tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)
 
-mp.add_key_binding(nil, "open", vanilla_menu.open)
-mp.add_key_binding(nil, "history", vanilla_menu.open)
+mp.add_key_binding(nil, "open", function() ui.open() end)
+mp.add_key_binding(nil, "toggle", function() ui.toggle() end)
+mp.add_key_binding(nil, "history", function() ui.open() end)
+mp.add_key_binding(nil, "history-vanilla", function() vanilla_menu.open() end)
+mp.add_key_binding(nil, "history-uosc", function() uosc_menu.open(1) end)
+
+mp.register_script_message("open", function() ui.open() end)
+mp.register_script_message("toggle", function() ui.toggle() end)
+mp.register_script_message("open-vanilla", function() vanilla_menu.open() end)
+mp.register_script_message("open-uosc", function(page) uosc_menu.open(tonumber(page) or 1) end)
+mp.register_script_message("uosc-page", function(page) uosc_menu.update(tonumber(page) or 1) end)
+
+mp.register_script_message("play", function(path, pos, duration)
+    play_history_item({
+        path = path,
+        pos = tonumber(pos) or 0,
+        duration = tonumber(duration) or 0,
+    })
+end)
+
+mp.register_script_message("delete", function(path)
+    if path and path ~= "" then
+        storage.remove(path)
+        msg.info("Janus: removed from history: " .. path)
+    end
+end)
+
+mp.register_script_message("clear", function()
+    storage.clear()
+    msg.info("Janus: history cleared")
+end)
+
+mp.register_script_message("compact", function()
+    local ok, count = storage.compact()
+    if ok then
+        msg.info(string.format("Janus: history compacted (%d items retained)", count or 0))
+    end
+end)
+
 msg.info("Janus initialized successfully")
