@@ -1,26 +1,61 @@
+-- ============================================================================
+-- Janus: History & Resume Plugin for mpv
+--
+-- Features:
+--   - Fast and lightweight history log saved as json lines
+--   - Loads history in pages from the end of the file so it stays fast
+--   - Prompts to resume playback or start from the beginning
+--   - Works with uosc menus or default mpv on-screen display
+--   - Ignores short clips or skipped files to keep history tidy
+-- ============================================================================
+
 local mp = require("mp")
 local msg = require("mp.msg")
 local opt = require("mp.options")
 local utils = require("mp.utils")
 
+-- ============================================================================
+-- 1. Configuration & Options
+-- ============================================================================
+
 local config = {
+    -- Storage
     history_file = "~~/janus_history.jsonl",
     max_history = 5000,
     compaction_threshold = 10000,
-    page_size = 20,
-    watch_threshold = 5,
-    update_interval = 30,
-    save_on_pause = true,
-    log_urls = true,
-    resume_offset = 0,
-    ui_mode = "auto",
+
+    -- Logging rules
+    watch_threshold = 5,       -- Minimum seconds played before saving to history
+    update_interval = 30,      -- Seconds between periodic progress updates
+    save_on_pause = true,      -- Save current position when pausing
+    log_urls = true,           -- Whether to record web URLs/streams
+    resume_offset = 0,         -- Seconds before saved position when resuming
+
+    -- Resume prompt
+    ask_resume = true,                 -- Ask to resume playback when loading a file
+    resume_threshold = 10,             -- Minimum saved position (seconds) to trigger prompt
+    resume_end_threshold = 15,         -- Ignore if within this many seconds from duration end
+    resume_timeout = 10,               -- Countdown timeout in seconds (0 to disable)
+    resume_timeout_action = "resume",  -- Action on timeout: "resume" or "beginning"
+    resume_pause_on_prompt = true,     -- Pause playback while resume prompt is active
+
+    -- Interface
+    ui_mode = "auto",          -- "auto", "uosc", or "vanilla"
+    page_size = 20,            -- Number of items per history page
 }
 
 opt.read_options(config, "janus")
 local history_path = mp.command_native({"expand-path", config.history_file})
 
+-- ============================================================================
+-- 2. Helpers
+-- ============================================================================
+
+-- Format seconds into MM:SS or HH:MM:SS
 local function format_duration(seconds)
-    if not seconds or seconds < 0 or seconds ~= seconds then return "00:00" end
+    if not seconds or seconds < 0 or seconds ~= seconds then
+        return "00:00"
+    end
     seconds = math.floor(seconds + 0.5)
     local h = math.floor(seconds / 3600)
     local m = math.floor((seconds % 3600) / 60)
@@ -32,6 +67,7 @@ local function format_duration(seconds)
     end
 end
 
+-- Convert timestamp to friendly relative time (e.g. 5 mins ago, 2 hrs ago)
 local function format_relative_time(epoch, now)
     if not epoch or epoch <= 0 then return "" end
     now = now or os.time()
@@ -54,6 +90,7 @@ local function format_relative_time(epoch, now)
     end
 end
 
+-- Get file name from full path
 local function get_filename(path)
     if not path or path == "" then return "Unknown" end
     local cleaned = path:gsub("[/\\]+$", "")
@@ -61,11 +98,13 @@ local function get_filename(path)
     return name or path
 end
 
+-- Check if path is a web stream or URL
 local function is_url(path)
     if not path then return false end
     return path:match("^%a[%w+.-]*://") ~= nil
 end
 
+-- Escape characters for safe ASS text rendering
 local function escape_ass(text)
     if not text then return "" end
     local escaped = tostring(text)
@@ -75,16 +114,22 @@ local function escape_ass(text)
     return escaped
 end
 
+-- Shorten long titles with an ellipsis
 local function truncate_string(str, max_len)
     if not str then return "" end
     if #str <= max_len then return str end
     return str:sub(1, max_len - 3) .. "..."
 end
 
+-- ============================================================================
+-- 3. History Storage (JSON Lines File)
+-- ============================================================================
+
 local storage = {
     append_count = 0,
 }
 
+-- Create folder if it doesn't exist yet
 local function ensure_dir(path)
     local dir = path:match("^(.*)[/\\]")
     if not dir or dir == "" then return end
@@ -97,6 +142,7 @@ local function ensure_dir(path)
     })
 end
 
+-- Append a video entry to the history file
 function storage.append(entry)
     if not entry or not entry.path then return false end
     ensure_dir(history_path)
@@ -117,6 +163,7 @@ function storage.append(entry)
     return true
 end
 
+-- Read lines from the end of the file backwards to load pages quickly
 local function reverse_scan_lines(chunk_size, callback)
     local f = io.open(history_path, "rb")
     if not f then return end
@@ -165,6 +212,7 @@ local function reverse_scan_lines(chunk_size, callback)
     f:close()
 end
 
+-- Load a single page of history entries
 function storage.get_page(page, page_size)
     page = math.max(1, tonumber(page) or 1)
     page_size = math.max(1, tonumber(page_size) or config.page_size)
@@ -204,6 +252,25 @@ function storage.get_page(page, page_size)
     }
 end
 
+-- Find the most recent record for a specific video
+function storage.get_entry(target_path)
+    if not target_path or target_path == "" then return nil end
+    local result = nil
+
+    reverse_scan_lines(8192, function(line)
+        local ok_json, entry = pcall(utils.parse_json, line)
+        if ok_json and type(entry) == "table" and entry.path == target_path then
+            if not entry.deleted then
+                result = entry
+            end
+            return true
+        end
+    end)
+
+    return result
+end
+
+-- Mark an item as deleted in the log
 function storage.remove(target_path)
     if not target_path or target_path == "" then return false end
     return storage.append({
@@ -213,6 +280,7 @@ function storage.remove(target_path)
     })
 end
 
+-- Clear all history
 function storage.clear()
     local f = io.open(history_path, "w")
     if f then
@@ -223,6 +291,7 @@ function storage.clear()
     return false
 end
 
+-- Clean up duplicate entries and keep the history file tidy
 function storage.compact()
     local entries = {}
     local seen = {}
@@ -268,6 +337,7 @@ function storage.compact()
     return true, count
 end
 
+-- Check if history has grown large enough to need cleanup
 function storage.check_compaction()
     local f = io.open(history_path, "r")
     if not f then return end
@@ -280,23 +350,14 @@ function storage.check_compaction()
     end
 end
 
-local function play_history_item(item)
-    if not item or not item.path then return end
-    local pos = item.pos or 0
-    local start_pos = math.max(0, pos - config.resume_offset)
+-- ============================================================================
+-- 4. Playback Tracking
+-- ============================================================================
 
-    if item.duration and item.duration > 30 and (item.duration - start_pos) < 10 then
-        start_pos = 0
-    end
-
-    if start_pos > 0 then
-        mp.commandv("loadfile", item.path, "replace", "start=" .. tostring(start_pos))
-    else
-        mp.commandv("loadfile", item.path, "replace")
-    end
-end
-
--- Playback Tracker
+---@class Tracker
+---@field current table
+---@field timer? any
+---@field is_paused boolean
 local tracker = {
     current = {
         path = nil,
@@ -310,8 +371,53 @@ local tracker = {
     is_paused = false,
 }
 
+---@class ResumePrompter
+---@field is_active boolean
+---@field target_pos number
+---@field original_paused boolean
+---@field remaining_seconds number
+---@field timer? any
+---@field overlay? any
+---@field key_bindings table<string, boolean>
+---@field handle_action? fun(action: string)
+---@field check? fun(path: string)
+---@field cancel? fun()
+local resume_prompter
+
+-- Save current video info to history
+local function record_history(entry)
+    if not entry or not entry.path then return false end
+    if not entry.title or entry.title == "" then
+        entry.title = get_filename(entry.path)
+    end
+    entry.time = entry.time or os.time()
+    entry.pos = math.floor((entry.pos or 0) * 10) / 10
+    entry.duration = math.floor(entry.duration or 0)
+
+    return storage.append(entry)
+end
+
+-- Load and play a file from history
+local function play_history_item(item)
+    if not item or not item.path then return end
+    local pos = item.pos or 0
+    local start_pos = math.max(0, pos - config.resume_offset)
+
+    -- If position is right near the end, start from the beginning instead
+    if item.duration and item.duration > 30 and (item.duration - start_pos) < 10 then
+        start_pos = 0
+    end
+
+    if start_pos > 0 then
+        mp.commandv("loadfile", item.path, "replace", "start=" .. tostring(start_pos))
+    else
+        mp.commandv("loadfile", item.path, "replace")
+    end
+end
+
+-- Save current playback position
 local function tracker_save()
-    if not tracker.current.path or not tracker.current.qualified then
+    if resume_prompter.is_active or not tracker.current.path or not tracker.current.qualified then
         return
     end
 
@@ -322,22 +428,24 @@ local function tracker_save()
         tracker.current.title = title
     end
 
-    storage.append({
+    record_history({
         path = tracker.current.path,
         title = tracker.current.title,
-        pos = math.floor((tracker.current.pos or 0) * 10) / 10,
-        duration = math.floor(tracker.current.duration or 0),
+        pos = tracker.current.pos,
+        duration = tracker.current.duration,
         time = os.time(),
     })
 end
 
+-- Heartbeat timer: counts active watch time
 local function tracker_on_tick()
-    if tracker.is_paused or not tracker.current.path then
+    if resume_prompter.is_active or tracker.is_paused or not tracker.current.path then
         return
     end
 
     tracker.current.watch_time = tracker.current.watch_time + 1
 
+    -- Qualify for history once minimum threshold is met
     if not tracker.current.qualified and tracker.current.watch_time >= config.watch_threshold then
         tracker.current.qualified = true
         tracker_save()
@@ -346,9 +454,211 @@ local function tracker_on_tick()
     end
 end
 
--- UI Modules
-local ui = { has_uosc = false }
+-- ============================================================================
+-- 5. Resume Prompt (uosc & Vanilla OSD)
+-- ============================================================================
 
+local ui = { has_uosc = false } -- Forward declaration
+
+resume_prompter = {
+    is_active = false,
+    target_pos = 0,
+    original_paused = false,
+    remaining_seconds = 10,
+    timer = nil,
+    overlay = nil,
+    key_bindings = {},
+}
+
+local function resume_remove_keys()
+    for name, _ in pairs(resume_prompter.key_bindings) do
+        mp.remove_key_binding(name)
+    end
+    resume_prompter.key_bindings = {}
+end
+
+-- Close prompt and clean up timer / keys
+local function resume_close_ui()
+    if resume_prompter.timer then
+        resume_prompter.timer:kill()
+        resume_prompter.timer = nil
+    end
+
+    if ui.has_uosc and config.ui_mode ~= "vanilla" then
+        mp.commandv("script-message-to", "uosc", "close-menu", "janus_resume")
+    end
+
+    resume_remove_keys()
+    if resume_prompter.overlay then
+        resume_prompter.overlay:remove()
+    end
+
+    resume_prompter.is_active = false
+end
+
+-- Show centered resume prompt on screen for vanilla mpv
+local function resume_render_vanilla()
+    if not resume_prompter.is_active then return end
+    if not resume_prompter.overlay then
+        resume_prompter.overlay = mp.create_osd_overlay("ass-events")
+    end
+
+    local pos_str = format_duration(resume_prompter.target_pos)
+    local timeout_text = ""
+    if resume_prompter.remaining_seconds > 0 then
+        local action_name = config.resume_timeout_action == "beginning" and "starting from beginning" or "resuming"
+        timeout_text = string.format("{\\fs14\\c&H888888&}Auto-%s in %ds...\\N", action_name, resume_prompter.remaining_seconds)
+    end
+
+    resume_prompter.overlay.data = string.format(
+        "{\\an5\\bord2\\shad2\\fs20\\c&HFFFFFF&}"
+        .. "{\\b1\\fs26\\c&H00D7FF&}RESUME PLAYBACK?{\\c&HFFFFFF&\\b0}\\N\\N"
+        .. "{\\fs18\\c&HD0D0D0&}Saved position: {\\b1\\c&H00FFFF&}%s{\\c&HD0D0D0&\\b0}\\N\\N"
+        .. "{\\fs16\\c&HFFFFFF&}[Enter] {\\b1}Resume{\\b0}      [r] {\\b1}Beginning{\\b0}      [Esc] {\\b1}Dismiss{\\b0}\\N\\N"
+        .. "%s",
+        pos_str,
+        timeout_text
+    )
+    resume_prompter.overlay:update()
+end
+
+-- Build prompt menu items for uosc
+local function resume_build_uosc_menu()
+    local pos_str = format_duration(resume_prompter.target_pos)
+    local action_name = config.resume_timeout_action == "beginning" and "beginning" or "resuming"
+    local footnote = resume_prompter.remaining_seconds > 0
+        and string.format("Auto-%s in %ds  •  Esc to dismiss", action_name, resume_prompter.remaining_seconds)
+        or "Esc to dismiss"
+
+    return {
+        type = "janus_resume",
+        title = "Resume Playback?",
+        footnote = footnote,
+        items = {
+            {
+                title = "Resume at " .. pos_str,
+                hint = "Saved position",
+                icon = "play_arrow",
+                bold = true,
+                value = {"script-message-to", "janus", "resume-action", "resume"},
+            },
+            {
+                title = "Start from beginning",
+                hint = "00:00",
+                icon = "replay",
+                value = {"script-message-to", "janus", "resume-action", "beginning"},
+            },
+        },
+    }
+end
+
+-- Handle resume action chosen by user or timeout
+function resume_prompter.handle_action(action)
+    if not resume_prompter.is_active then return end
+
+    local target = resume_prompter.target_pos
+    local orig_paused = resume_prompter.original_paused
+    local paused_by_prompt = config.resume_pause_on_prompt
+
+    resume_close_ui()
+
+    if action == "resume" then
+        local seek_pos = math.max(0, target - config.resume_offset)
+        mp.commandv("seek", tostring(seek_pos), "absolute", "exact")
+        if paused_by_prompt then mp.set_property_bool("pause", false) end
+    elseif action == "beginning" then
+        mp.commandv("seek", "0", "absolute", "exact")
+        if paused_by_prompt then mp.set_property_bool("pause", false) end
+    elseif action == "dismiss" then
+        if paused_by_prompt then mp.set_property_bool("pause", orig_paused) end
+    end
+end
+
+-- Countdown timer tick for resume prompt
+local function resume_on_tick()
+    if not resume_prompter.is_active then return end
+    resume_prompter.remaining_seconds = resume_prompter.remaining_seconds - 1
+
+    if resume_prompter.remaining_seconds <= 0 then
+        resume_prompter.handle_action(config.resume_timeout_action)
+        return
+    end
+
+    if ui.has_uosc and config.ui_mode ~= "vanilla" then
+        mp.commandv("script-message-to", "uosc", "update-menu", utils.format_json(resume_build_uosc_menu()))
+    else
+        resume_render_vanilla()
+    end
+end
+
+-- Check if opened video has saved progress and show prompt if so
+function resume_prompter.check(path)
+    if not config.ask_resume or not path or path == "" then return end
+    if not config.log_urls and is_url(path) then return end
+
+    local entry = storage.get_entry(path)
+    if not entry or not entry.pos then return end
+
+    local pos = tonumber(entry.pos) or 0
+    if pos < config.resume_threshold then return end
+
+    local duration = tonumber(entry.duration) or 0
+    if duration > 0 and (duration - pos) < config.resume_end_threshold then return end
+
+    local current_pos = mp.get_property_number("time-pos", 0)
+    if math.abs(current_pos - pos) < 2 then return end
+
+    resume_prompter.is_active = true
+    resume_prompter.target_pos = pos
+    resume_prompter.original_paused = mp.get_property_bool("pause", false)
+    resume_prompter.remaining_seconds = config.resume_timeout
+
+    if config.resume_pause_on_prompt then
+        mp.set_property_bool("pause", true)
+    end
+
+    if resume_prompter.remaining_seconds > 0 then
+        resume_prompter.timer = mp.add_periodic_timer(1, resume_on_tick)
+    end
+
+    if ui.has_uosc and config.ui_mode ~= "vanilla" then
+        mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json(resume_build_uosc_menu()))
+    else
+        local function bind(key, name, fn)
+            resume_prompter.key_bindings[name] = true
+            mp.add_forced_key_binding(key, name, fn)
+        end
+        bind("ENTER", "janus_prompt_enter", function() resume_prompter.handle_action("resume") end)
+        bind("r", "janus_prompt_r", function() resume_prompter.handle_action("beginning") end)
+        bind("b", "janus_prompt_b", function() resume_prompter.handle_action("beginning") end)
+        bind("HOME", "janus_prompt_home", function() resume_prompter.handle_action("beginning") end)
+        bind("ESC", "janus_prompt_esc", function() resume_prompter.handle_action("dismiss") end)
+        bind("q", "janus_prompt_q", function() resume_prompter.handle_action("dismiss") end)
+
+        resume_render_vanilla()
+    end
+end
+
+-- Cancel prompt if file ends or changes
+function resume_prompter.cancel()
+    if resume_prompter.is_active then
+        resume_close_ui()
+    end
+end
+
+-- ============================================================================
+-- 6. History Menus (uosc & Vanilla OSD)
+-- ============================================================================
+
+---@class VanillaMenu
+---@field is_open boolean
+---@field current_page number
+---@field page_data? any
+---@field selected_index number
+---@field overlay? any
+---@field key_bindings table<string, boolean>
+---@field open? fun()
+---@field close? fun()
 local vanilla_menu = {
     is_open = false,
     current_page = 1,
@@ -358,6 +668,7 @@ local vanilla_menu = {
     key_bindings = {},
 }
 
+-- Render history list on screen
 local function vanilla_render()
     if not vanilla_menu.is_open then return end
     if not vanilla_menu.overlay then
@@ -404,6 +715,7 @@ local function vanilla_render()
     vanilla_menu.overlay:update()
 end
 
+-- Refresh current page contents
 local function vanilla_refresh()
     vanilla_menu.page_data = storage.get_page(vanilla_menu.current_page)
     local items = vanilla_menu.page_data.items
@@ -419,6 +731,7 @@ local function vanilla_refresh()
     vanilla_render()
 end
 
+-- Close the on-screen menu
 function vanilla_menu.close()
     if not vanilla_menu.is_open then return end
     vanilla_menu.is_open = false
@@ -431,6 +744,7 @@ function vanilla_menu.close()
     end
 end
 
+-- Open the on-screen menu
 function vanilla_menu.open()
     if vanilla_menu.is_open then
         vanilla_menu.close()
@@ -501,8 +815,10 @@ function vanilla_menu.open()
     vanilla_refresh()
 end
 
+-- uosc menu integration
 local uosc_menu = {}
 
+-- Build menu structure for uosc
 local function uosc_build_menu(page_num)
     local page_data = storage.get_page(page_num)
     local items = page_data.items
@@ -578,6 +894,7 @@ function uosc_menu.update(page_num)
     mp.commandv("script-message-to", "uosc", "update-menu", json)
 end
 
+-- Open history using uosc if available or vanilla OSD as fallback
 function ui.open(page_num)
     local mode = config.ui_mode or "auto"
     if mode == "vanilla" then
@@ -593,6 +910,7 @@ function ui.open(page_num)
     end
 end
 
+-- Toggle history menu
 function ui.toggle()
     local mode = config.ui_mode or "auto"
     if mode == "vanilla" or (mode == "auto" and not ui.has_uosc) then
@@ -605,6 +923,10 @@ function ui.toggle()
         uosc_menu.open(1)
     end
 end
+
+-- ============================================================================
+-- 7. mpv Events
+-- ============================================================================
 
 mp.register_script_message("uosc-version", function()
     ui.has_uosc = true
@@ -622,18 +944,24 @@ mp.register_event("file-loaded", function()
         return
     end
 
+    local title = mp.get_property("media-title") or get_filename(path)
+    local duration = mp.get_property_number("duration", 0) or 0
+    local pos = mp.get_property_number("time-pos", 0) or 0
+
     tracker.current = {
         path = path,
-        title = mp.get_property("media-title") or get_filename(path),
-        pos = mp.get_property_number("time-pos", 0) or 0,
-        duration = mp.get_property_number("duration", 0) or 0,
+        title = title,
+        pos = pos,
+        duration = duration,
         watch_time = 0,
         qualified = false,
     }
 
     tracker.is_paused = mp.get_property_bool("pause", false)
 
-    if config.watch_threshold <= 0 then
+    resume_prompter.check(path)
+
+    if config.watch_threshold <= 0 and not resume_prompter.is_active then
         tracker.current.qualified = true
         tracker_save()
     end
@@ -641,12 +969,13 @@ end)
 
 mp.observe_property("pause", "bool", function(_, paused)
     tracker.is_paused = paused
-    if paused and config.save_on_pause and tracker.current.qualified then
+    if not resume_prompter.is_active and paused and config.save_on_pause and tracker.current.qualified then
         tracker_save()
     end
 end)
 
 mp.register_event("end-file", function()
+    resume_prompter.cancel()
     if tracker.current.qualified then
         tracker_save()
     end
@@ -656,6 +985,10 @@ mp.register_event("end-file", function()
 end)
 
 tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)
+
+-- ============================================================================
+-- 8. Keybindings & Script Messages
+-- ============================================================================
 
 mp.add_key_binding(nil, "open", function() ui.open() end)
 mp.add_key_binding(nil, "toggle", function() ui.toggle() end)
@@ -668,6 +1001,10 @@ mp.register_script_message("toggle", function() ui.toggle() end)
 mp.register_script_message("open-vanilla", function() vanilla_menu.open() end)
 mp.register_script_message("open-uosc", function(page) uosc_menu.open(tonumber(page) or 1) end)
 mp.register_script_message("uosc-page", function(page) uosc_menu.update(tonumber(page) or 1) end)
+
+mp.register_script_message("resume-action", function(action)
+    resume_prompter.handle_action(action)
+end)
 
 mp.register_script_message("play", function(path, pos, duration)
     play_history_item({
