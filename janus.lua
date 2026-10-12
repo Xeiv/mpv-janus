@@ -7,6 +7,7 @@
 --   - Prompts to resume playback or start from the beginning
 --   - Works with uosc menus or default mpv on-screen display
 --   - Ignores short clips or skipped files to keep history tidy
+--   - Toggle history tracking on or off anytime with Alt+h
 -- ============================================================================
 
 local mp = require("mp")
@@ -19,6 +20,9 @@ local utils = require("mp.utils")
 -- ============================================================================
 
 local config = {
+    -- State
+    enabled = true,            -- Whether history tracking is enabled
+
     -- Storage
     history_file = "~~/janus_history.jsonl",
     max_history = 5000,
@@ -46,6 +50,7 @@ local config = {
 
 opt.read_options(config, "janus")
 local history_path = mp.command_native({"expand-path", config.history_file})
+local tracking_enabled = config.enabled
 
 -- ============================================================================
 -- 2. Helpers
@@ -119,6 +124,14 @@ local function truncate_string(str, max_len)
     if not str then return "" end
     if #str <= max_len then return str end
     return str:sub(1, max_len - 3) .. "..."
+end
+
+-- Toggle history tracking on or off
+local function toggle_tracking()
+    tracking_enabled = not tracking_enabled
+    local status = tracking_enabled and "enabled" or "disabled"
+    mp.osd_message(string.format("Janus: History tracking %s", status), 2)
+    msg.info(string.format("Janus: History tracking %s", status))
 end
 
 -- ============================================================================
@@ -386,7 +399,7 @@ local resume_prompter
 
 -- Save current video info to history
 local function record_history(entry)
-    if not entry or not entry.path then return false end
+    if not tracking_enabled or not entry or not entry.path then return false end
     if not entry.title or entry.title == "" then
         entry.title = get_filename(entry.path)
     end
@@ -417,7 +430,7 @@ end
 
 -- Save current playback position
 local function tracker_save()
-    if resume_prompter.is_active or not tracker.current.path or not tracker.current.qualified then
+    if not tracking_enabled or resume_prompter.is_active or not tracker.current.path or not tracker.current.qualified then
         return
     end
 
@@ -439,7 +452,7 @@ end
 
 -- Heartbeat timer: counts active watch time
 local function tracker_on_tick()
-    if resume_prompter.is_active or tracker.is_paused or not tracker.current.path then
+    if not tracking_enabled or resume_prompter.is_active or tracker.is_paused or not tracker.current.path then
         return
     end
 
@@ -990,14 +1003,18 @@ tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)
 -- 8. Keybindings & Script Messages
 -- ============================================================================
 
-mp.add_key_binding(nil, "open", function() ui.open() end)
+-- Keybindings (defaults: 'h' opens history, 'Alt+h' toggles tracking)
+mp.add_key_binding("h", "open", function() ui.open() end)
+mp.add_key_binding("Alt+h", "toggle-tracking", toggle_tracking)
 mp.add_key_binding(nil, "toggle", function() ui.toggle() end)
 mp.add_key_binding(nil, "history", function() ui.open() end)
 mp.add_key_binding(nil, "history-vanilla", function() vanilla_menu.open() end)
 mp.add_key_binding(nil, "history-uosc", function() uosc_menu.open(1) end)
 
+-- Script Messages
 mp.register_script_message("open", function() ui.open() end)
 mp.register_script_message("toggle", function() ui.toggle() end)
+mp.register_script_message("toggle-tracking", toggle_tracking)
 mp.register_script_message("open-vanilla", function() vanilla_menu.open() end)
 mp.register_script_message("open-uosc", function(page) uosc_menu.open(tonumber(page) or 1) end)
 mp.register_script_message("uosc-page", function(page) uosc_menu.update(tonumber(page) or 1) end)
