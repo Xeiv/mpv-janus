@@ -117,6 +117,27 @@ local function is_url(path)
     return path:match("^%a[%w+.-]*://") ~= nil
 end
 
+-- Check if a local file exists on disk
+local function file_exists(path)
+    if not path or path == "" then return false end
+    if is_url(path) then return true end
+    local expanded = mp.command_native({"expand-path", path})
+    local info = utils.file_info(expanded)
+    return info ~= nil
+end
+
+-- Add unicode strikethrough to a string (for uosc rendering)
+local function strikethrough(str)
+    if not str or str == "" then return "" end
+    local res = {}
+    local combining = string.char(204, 182)
+    local char_pat = "[%z" .. string.char(1) .. "-" .. string.char(127) .. string.char(194) .. "-" .. string.char(244) .. "][" .. string.char(128) .. "-" .. string.char(191) .. "]*"
+    for uchar in str:gmatch(char_pat) do
+        table.insert(res, uchar .. combining)
+    end
+    return table.concat(res)
+end
+
 -- Check if a path matches ignored folder or directory patterns
 local function should_ignore_path(path)
     if not path or path == "" then return true end
@@ -436,6 +457,12 @@ end
 -- Load and play a file from history
 local function play_history_item(item)
     if not item or not item.path then return end
+
+    if not is_url(item.path) and not file_exists(item.path) then
+        mp.osd_message("Janus: File has been moved or deleted", 3)
+        msg.warn("Janus: Cannot play, file has been moved or deleted: " .. item.path)
+        return
+    end
     local pos = item.pos or 0
     local start_pos = math.max(0, pos - config.resume_offset)
 
@@ -758,9 +785,15 @@ local function vanilla_render()
             local title = escape_ass(truncate_string(item.title or get_filename(item.path), 55))
             local title_color = is_selected and "{\\c&HFFFFFF&\\b1}" or "{\\c&HD0D0D0&\\b0}"
 
+            local exists = file_exists(item.path)
             local pos_str = format_duration(item.pos or 0)
             local dur_str = format_duration(item.duration or 0)
             local rel_time = format_relative_time(item.time, now)
+
+            if not exists then
+                title = string.format("{\\s1}%s{\\s0} {\\c&HFF6666&}[Deleted or Moved]", title)
+                title_color = "{\\c&H888888&}"
+            end
             local meta = string.format("{\\c&H999999&\\fs14}  [%s / %s]  •  %s", pos_str, dur_str, rel_time)
 
             table.insert(lines, string.format("%s%s%s%s\\N", prefix, title_color, title, meta))
@@ -857,6 +890,10 @@ function vanilla_menu.open()
         local items = vanilla_menu.page_data and vanilla_menu.page_data.items or {}
         local item = items[vanilla_menu.selected_index]
         if item then
+            if not is_url(item.path) and not file_exists(item.path) then
+                mp.osd_message("Janus: File has been moved or deleted", 3)
+                return
+            end
             vanilla_menu.close()
             play_history_item(item)
         end
@@ -899,19 +936,27 @@ local function uosc_build_menu(page_num)
     else
         for _, item in ipairs(items) do
             local title = item.title or get_filename(item.path)
+            local exists = file_exists(item.path)
             local pos_str = format_duration(item.pos or 0)
             local dur_str = format_duration(item.duration or 0)
             local rel_time = format_relative_time(item.time, now)
 
+            local display_title = exists and title or strikethrough(title)
+            local hint_str = exists
+                and string.format("%s / %s  •  %s", pos_str, dur_str, rel_time)
+                title = string.format("{\\s1}%s{\\s0} {\\c&HFF6666&}[Deleted or Moved]", title)
+                title_color = "{\\c&H888888&}"
             table.insert(menu_items, {
-                title = title,
-                hint = string.format("%s / %s  •  %s", pos_str, dur_str, rel_time),
-                icon = "history",
+                title = display_title,
+                hint = hint_str,
+                icon = exists and "history" or "error",
+                muted = not exists,
                 value = {
                     action = "play",
                     path = item.path,
                     pos = tonumber(item.pos) or 0,
                     duration = tonumber(item.duration) or 0,
+                    missing = not exists,
                 },
                 actions = {
                     {
@@ -1208,6 +1253,10 @@ mp.register_script_message("uosc-event", function(json_str)
         if val.action == "page" then
             uosc_menu.update(val.page)
         elseif val.action == "play" then
+            if val.missing or (not is_url(val.path) and not file_exists(val.path)) then
+                mp.osd_message("Janus: File has been moved or deleted", 3)
+                return
+            end
             mp.commandv("script-message-to", "uosc", "close-menu", "janus_history")
             play_history_item({
                 path = val.path,

@@ -12,6 +12,7 @@ It keeps track of recently watched videos, lets you resume where you left off, a
 - **Resume Where You Left Off**: When you open a video you've watched before, Janus pops up a quick prompt asking if you want to resume where you left off or start from the beginning.
 - **Smart 95% Completion Rule**: Automatically skips the resume prompt and restarts from the beginning if you previously finished the video or left during the end credits (configurable threshold and 95% rule).
 - **Hold to Speed Up (YouTube Style)**: Press and hold `Space` or `Right Click` to temporarily speed up playback to 2.0x with audio pitch correction kept intact. Releasing it smoothly restores normal speed, while a quick tap plays/pauses. You can also toggle 2.0x speed anytime with `Alt+n`.
+- **Missing & Deleted File Detection**: If a video in your history was moved, deleted, or is on an unmounted drive, Janus strikes through its title and marks it `[Deleted or Moved]`. Clicking it gives a clear on-screen notice instead of failing.
 - **Hover to Delete (uosc)**: In uosc, hover over any item in your history menu to reveal a delete button to remove it instantly.
 - **Folder Blacklist**: Exclude specific directories or temporary download folders from ever being saved to history.
 - **Toggle History Anytime**: Quickly turn history logging on or off on the fly by pressing `Alt+h`.
