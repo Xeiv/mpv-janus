@@ -34,6 +34,11 @@ local config = {
     save_on_pause = true,
     log_urls = true,
     resume_offset = 0,
+
+    -- url metadata
+    format_url_titles = true,
+    fetch_url_metadata = true,
+    ytdl_path = "yt-dlp",
     ignore_paths = "",
 
     -- resume prompt
@@ -134,6 +139,164 @@ local function is_url(path)
     return path:match("^%a[%w+.-]*://") ~= nil
 end
 
+local function is_generic_title(title)
+    if not title or title == "" then return true end
+    local clean = title:match("^%s*(.-)%s*$"):lower()
+    clean = clean:gsub("%s*%([%d%-%/]+%)%s*$", ""):gsub("%s*%[[%d%-%/]+%]%s*$", "")
+    clean = clean:gsub("%.%w+$", "")
+    clean = clean:match("^%s*(.-)%s*$")
+
+    local generic = {
+        ["master"] = true,
+        ["index"] = true,
+        ["playlist"] = true,
+        ["manifest"] = true,
+        ["live"] = true,
+        ["chunklist"] = true,
+        ["stream"] = true,
+        ["video"] = true,
+        ["audio"] = true,
+        ["main"] = true,
+        ["prog_index"] = true,
+        ["unknown"] = true,
+    }
+    return generic[clean] == true
+end
+
+local function url_decode(str)
+    if not str then return "" end
+    str = str:gsub("+", " ")
+    str = str:gsub("%%(%x%x)", function(h)
+        return string.char(tonumber(h, 16))
+    end)
+    return str
+end
+
+local function clean_url_title(url)
+    if not url then return "" end
+    local clean = url:match("^([^?#]+)") or url
+    local name = clean:match("([^/]+)$") or clean
+    name = url_decode(name)
+    name = name:gsub("%.%w+$", "")
+    if is_generic_title(name) then
+        return ""
+    end
+    return name
+end
+
+local function format_date(raw_date)
+    if not raw_date or raw_date == "" or raw_date == "NA" then return nil end
+    raw_date = tostring(raw_date):match("^%s*(.-)%s*$")
+
+    local y, m, d = raw_date:match("^(%d%d%d%d)[%-%/](%d%d)[%-%/](%d%d)")
+    if y and m and d then
+        return string.format("%s-%s-%s", y, m, d)
+    end
+
+    y, m, d = raw_date:match("^(%d%d%d%d)(%d%d)(%d%d)$")
+    if y and m and d then
+        return string.format("%s-%s-%s", y, m, d)
+    end
+
+    local num = tonumber(raw_date)
+    if num and num > 946684800 and num < 4102444800 then
+        return os.date("!%Y-%m-%d", num)
+    end
+
+    local year = raw_date:match("^(%d%d%d%d)$")
+    if year then
+        return year
+    end
+
+    return nil
+end
+
+local function format_media_title(author, title, date)
+    if not title or title == "" or title == "NA" then return nil end
+    title = title:match("^%s*(.-)%s*$")
+    if is_url(title) then
+        title = clean_url_title(title)
+    end
+    if not title or title == "" or is_generic_title(title) then
+        if not author or author == "" or author == "NA" then
+            return nil
+        end
+        title = nil
+    end
+
+    if author == "NA" then author = nil end
+    if date == "NA" then date = nil end
+
+    if author then
+        author = author:match("^%s*(.-)%s*$")
+        if author == "" then author = nil end
+    end
+
+    local formatted_date = format_date(date)
+
+    if author and title then
+        local author_lower = author:lower()
+        if title:lower():find("^" .. author_lower:gsub("%p", "%%%0") .. "%s*[-:]%s*") then
+            author = nil
+        end
+    end
+
+    if formatted_date and title then
+        if title:find("%(" .. formatted_date:gsub("%p", "%%%0") .. "%)$") or
+           title:find("%[" .. formatted_date:gsub("%p", "%%%0") .. "%]$") then
+            formatted_date = nil
+        end
+    end
+
+    local result = title or author
+    if not result then return nil end
+
+    if author and title and author ~= "" then
+        result = string.format("%s: %s", author, result)
+    end
+    if formatted_date and formatted_date ~= "" then
+        result = string.format("%s (%s)", result, formatted_date)
+    end
+
+    if is_generic_title(result) then
+        return nil
+    end
+
+    return result
+end
+
+local function get_metadata_val(meta, ...)
+    if not meta or type(meta) ~= "table" then return nil end
+    local targets = {...}
+    for k, v in pairs(meta) do
+        if type(k) == "string" and v and v ~= "" and v ~= "NA" then
+            local lk = k:lower()
+            for _, t in ipairs(targets) do
+                if lk == t:lower() then
+                    return tostring(v)
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function extract_metadata_fields(meta, fmeta)
+    meta = meta or {}
+    fmeta = fmeta or {}
+
+    local author = get_metadata_val(meta, "uploader", "channel", "creator", "artist", "author", "album_artist", "channel_name", "streamer")
+        or get_metadata_val(fmeta, "uploader", "channel", "creator", "artist", "author", "album_artist", "channel_name", "streamer")
+
+    local date = get_metadata_val(meta, "date", "upload_date", "release_date", "creation_time", "year", "timestamp", "start_time")
+        or get_metadata_val(fmeta, "date", "upload_date", "release_date", "creation_time", "year", "timestamp", "start_time")
+
+    local title = get_metadata_val(meta, "title", "track", "icy-title", "song", "session_title")
+        or get_metadata_val(fmeta, "title", "track", "icy-title", "song", "session_title")
+
+    return author, title, date
+end
+
 local function file_exists(path)
     if not path or path == "" then return false end
     if is_url(path) then return true end
@@ -141,6 +304,40 @@ local function file_exists(path)
     local info = utils.file_info(expanded)
     return info ~= nil
 end
+
+local function find_executable(name)
+    if not name or name == "" then return nil end
+    local expanded = mp.command_native({"expand-path", name})
+    if name:find("[/\\]") then
+        local info = utils.file_info(expanded)
+        if info then return expanded end
+        return nil
+    end
+
+    local path_env = os.getenv("PATH") or ""
+    local sep = package.config:sub(1, 1) == "\\" and ";" or ":"
+    for dir in path_env:gmatch("[^" .. sep .. "]+") do
+        local full = utils.join_path(dir, name)
+        local info = utils.file_info(full)
+        if info then return full end
+        if sep == ";" then
+            local full_exe = full .. ".exe"
+            if utils.file_info(full_exe) then return full_exe end
+        end
+    end
+    return nil
+end
+
+local resolved_ytdl = nil
+local function check_ytdl_availability()
+    if not config.fetch_url_metadata then return end
+    resolved_ytdl = find_executable(config.ytdl_path)
+    if not resolved_ytdl then
+        config.fetch_url_metadata = false
+        msg.verbose(string.format("Janus: ytdl_path '%s' not found, disabling background url metadata fetch", tostring(config.ytdl_path)))
+    end
+end
+check_ytdl_availability()
 
 local function is_same_path(path1, path2)
     if not path1 or not path2 then return false end
@@ -346,6 +543,25 @@ function storage.get_entry(target_path)
     return result
 end
 
+function storage.get_best_title(target_path)
+    if not target_path or target_path == "" then return nil end
+    local best_title = nil
+
+    reverse_scan_lines(8192, function(line)
+        local ok_json, entry = pcall(utils.parse_json, line)
+        if ok_json and type(entry) == "table" and entry.path == target_path then
+            if not entry.deleted and entry.title and entry.title ~= "" then
+                if not is_url(entry.title) and not is_generic_title(entry.title) then
+                    best_title = entry.title
+                    return true
+                end
+            end
+        end
+    end)
+
+    return best_title
+end
+
 function storage.remove(target_path)
     if not target_path or target_path == "" then return false end
     return storage.append({
@@ -529,6 +745,7 @@ local tracker = {
         duration = 0,
         watch_time = 0,
         qualified = false,
+        formatted_title = nil,
     },
     timer = nil,
     is_paused = false,
@@ -631,7 +848,7 @@ local function tracker_save()
 
     tracker.current.pos = mp.get_property_number("time-pos", tracker.current.pos) or tracker.current.pos
     tracker.current.duration = mp.get_property_number("duration", tracker.current.duration) or tracker.current.duration
-    local title = mp.get_property("media-title")
+    local title = tracker.current.formatted_title or mp.get_property("media-title")
     if title and title ~= "" then
         tracker.current.title = title
     end
@@ -1343,6 +1560,225 @@ mp.register_script_message("uosc-version", function()
 end)
 
 -- ============================================================================
+-- URL Metadata Enrichment
+-- ============================================================================
+local function apply_formatted_title(path, formatted)
+    if not formatted or formatted == "" then return end
+    if not tracker.current.path or not is_same_path(tracker.current.path, path) then return end
+    if is_generic_title(formatted) then return end
+
+    -- Do not overwrite an existing creator title with one lacking creator
+    if tracker.current.title and not is_generic_title(tracker.current.title) and not is_url(tracker.current.title) then
+        if not formatted:find(":") and tracker.current.title:find(":") then
+            return
+        end
+    end
+
+    if tracker.current.formatted_title == formatted then return end
+
+    tracker.current.formatted_title = formatted
+    tracker.current.title = formatted
+
+    mp.set_property("force-media-title", formatted)
+    msg.info("Janus: Formatted title: " .. formatted)
+
+    if tracker.current.qualified then
+        tracker_save()
+    end
+
+    if vanilla_menu.is_open then
+        vanilla_refresh()
+    elseif ui.has_uosc and uosc_menu.current_page then
+        uosc_menu.update(uosc_menu.current_page)
+    end
+end
+
+local function try_format_from_mpv_metadata(path)
+    local meta = mp.get_property_native("metadata") or {}
+    local fmeta = mp.get_property_native("filtered-metadata") or {}
+    local author, title, date = extract_metadata_fields(meta, fmeta)
+
+    if not title or title == "" or is_url(title) or is_generic_title(title) then
+        local raw_title = mp.get_property("media-title")
+        if raw_title and raw_title ~= "" and not is_url(raw_title) and not is_generic_title(raw_title) then
+            title = raw_title
+        else
+            title = storage.get_best_title(path) or clean_url_title(path)
+        end
+    end
+
+    local formatted = format_media_title(author, title, date)
+    if formatted and not is_generic_title(formatted) and (author or date) then
+        apply_formatted_title(path, formatted)
+        return true, author ~= nil, date ~= nil
+    end
+
+    if formatted and not is_url(formatted) and not is_generic_title(formatted) and is_url(mp.get_property("media-title") or "") then
+        apply_formatted_title(path, formatted)
+    end
+
+    return false, author ~= nil, date ~= nil
+end
+
+local function resolve_kick_cdn(url)
+    local channel_ivs, stream_id = url:match("stream%.kick%.com/[^/]+/ivs/v1/[^/]+/([^/]+)/%d+/%d+/%d+/%d+/%d+/([^/]+)/")
+    if not channel_ivs or not stream_id then return false end
+
+    local slug = nil
+    if channel_ivs == "BO2zfdDBEu6T" then
+        slug = "buddha"
+    end
+
+    if not slug then
+        reverse_scan_lines(8192, function(line)
+            local ok_json, entry = pcall(utils.parse_json, line)
+            if ok_json and type(entry) == "table" and entry.path and entry.title then
+                if entry.path:find(channel_ivs, 1, true) then
+                    local creator = entry.title:match("^([^:]+):")
+                    if creator and creator ~= "" and not is_generic_title(creator) then
+                        slug = creator:lower()
+                        return true
+                    end
+                end
+            end
+        end)
+    end
+
+    if not slug then return false end
+
+    local api_url = string.format("https://kick.com/api/v2/channels/%s/videos", slug)
+    mp.command_native_async({
+        name = "subprocess",
+        args = {"curl", "-s", "-H", "User-Agent: Mozilla/5.0", api_url},
+        playback_only = false,
+        capture_stdout = true,
+        capture_stderr = false,
+    }, function(success, res)
+        if not success or not res or res.status ~= 0 or not res.stdout then return end
+        local ok_json, data = pcall(utils.parse_json, res.stdout)
+        if not ok_json or type(data) ~= "table" then return end
+
+        for _, v in ipairs(data) do
+            local source = v.source or ""
+            if source:find(stream_id, 1, true) then
+                local creator = slug:sub(1, 1):upper() .. slug:sub(2)
+                local title = v.session_title
+                local date = (v.created_at or ""):sub(1, 10)
+                local formatted = format_media_title(creator, title, date)
+                if formatted then
+                    apply_formatted_title(url, formatted)
+                end
+                return
+            end
+        end
+    end)
+
+    return true
+end
+
+local function canonicalize_stream_url(url)
+    if not url then return nil end
+
+    -- Twitch live HLS stream: *.hls.ttvnw.net/.../channel.m3u8 or usher.ttvnw.net/.../channel.m3u8
+    local twitch_ch = url:match("ttvnw%.net/.-/([%w_]+)%.m3u8")
+    if twitch_ch and not is_generic_title(twitch_ch) then
+        return "https://www.twitch.tv/" .. twitch_ch
+    end
+
+    -- Twitch VOD: *.cloudfront.net/<hash>/<vod_id>_.../
+    local twitch_vod = url:match("cloudfront%.net/[^/]+/([%d]+)_")
+    if twitch_vod then
+        return "https://www.twitch.tv/videos/" .. twitch_vod
+    end
+
+    -- YouTube googlevideo CDN playback
+    if url:find("googlevideo%.com/videoplayback") then
+        local docid = url:match("[%?&]docid=([^&]+)") or url:match("[%?&]id=([^&]+)")
+        if docid and #docid == 11 then
+            return "https://www.youtube.com/watch?v=" .. docid
+        end
+    end
+
+    -- Kick video query param: kick.com/<channel>?video=<uuid>
+    local kick_user, kick_uuid = url:match("kick%.com/([%w_]+)%?video=([%w%-]+)")
+    if kick_user and kick_uuid then
+        return "https://kick.com/" .. kick_user .. "/videos/" .. kick_uuid
+    end
+
+    -- Rumble embed to video: rumble.com/embed/<id>
+    local rumble_embed = url:match("rumble%.com/embed/([%w]+)")
+    if rumble_embed then
+        return "https://rumble.com/embed/" .. rumble_embed
+    end
+
+    return url
+end
+
+local function fetch_url_metadata(path)
+    if not config.fetch_url_metadata or not is_url(path) then return end
+
+    if path:find("stream%.kick%.com") and resolve_kick_cdn(path) then
+        return
+    end
+
+    if not resolved_ytdl then return end
+
+    local query_url = canonicalize_stream_url(path) or path
+
+    local args = {
+        resolved_ytdl,
+        "--no-warnings",
+        "--no-playlist",
+        "--skip-download",
+        "--print", "%(uploader,channel,creator,artist)s<JANUS_SEP>%(title)s<JANUS_SEP>%(upload_date,release_date)s",
+        query_url,
+    }
+
+    mp.command_native_async({
+        name = "subprocess",
+        args = args,
+        playback_only = false,
+        capture_stdout = true,
+        capture_stderr = true,
+    }, function(success, res, err)
+        if not success or not res or res.status ~= 0 or not res.stdout then
+            if res and res.status == -3 then
+                config.fetch_url_metadata = false
+                resolved_ytdl = nil
+            end
+            if err then msg.debug("Janus: yt-dlp metadata fetch failed: " .. tostring(err)) end
+            return
+        end
+
+        local a, t, d = res.stdout:match("^%s*(.-)<JANUS_SEP>(.-)<JANUS_SEP>(.-)%s*$")
+        if not t or t == "" or t == "NA" or is_url(t) or is_generic_title(t) then
+            local raw = mp.get_property("media-title")
+            if raw and raw ~= "" and not is_url(raw) and not is_generic_title(raw) then
+                t = raw
+            else
+                t = storage.get_best_title(path) or clean_url_title(path)
+            end
+        end
+        if a == "NA" then a = nil end
+        if d == "NA" then d = nil end
+
+        if not a or not d then
+            local meta = mp.get_property_native("metadata") or {}
+            local fmeta = mp.get_property_native("filtered-metadata") or {}
+            local meta_author, _, meta_date = extract_metadata_fields(meta, fmeta)
+            a = a or meta_author
+            d = d or meta_date
+        end
+
+        local formatted = format_media_title(a, t, d)
+        if formatted and not is_generic_title(formatted) then
+            apply_formatted_title(path, formatted)
+        end
+    end)
+end
+
+
+-- ============================================================================
 -- mpv Events
 -- ============================================================================
 
@@ -1359,9 +1795,21 @@ mp.register_event("file-loaded", function()
         return
     end
 
-    local title = mp.get_property("media-title") or get_filename(path)
+    local raw_title = mp.get_property("media-title")
     local duration = mp.get_property_number("duration", 0) or 0
     local pos = mp.get_property_number("time-pos", 0) or 0
+
+    local title = raw_title
+    local saved_best = storage.get_best_title(path)
+    if not title or title == "" or is_url(title) or is_generic_title(title) then
+        if saved_best then
+            title = saved_best
+        elseif raw_title and raw_title ~= "" and not is_url(raw_title) then
+            title = raw_title
+        else
+            title = get_filename(path)
+        end
+    end
 
     tracker.current = {
         path = path,
@@ -1370,9 +1818,22 @@ mp.register_event("file-loaded", function()
         duration = duration,
         watch_time = 0,
         qualified = false,
+        formatted_title = nil,
     }
 
     tracker.is_paused = mp.get_property_bool("pause", false)
+
+    if saved_best and (not raw_title or is_url(raw_title) or is_generic_title(raw_title)) then
+        tracker.current.formatted_title = saved_best
+        mp.set_property("force-media-title", saved_best)
+    end
+
+    if config.format_url_titles and is_url(path) then
+        local ok, has_author, has_date = try_format_from_mpv_metadata(path)
+        if (not ok or not has_author or not has_date) and config.fetch_url_metadata and resolved_ytdl then
+            fetch_url_metadata(path)
+        end
+    end
 
     resume_prompter.check(path)
 
@@ -1389,6 +1850,28 @@ mp.observe_property("pause", "bool", function(_, paused)
     end
 end)
 
+mp.observe_property("metadata", "native", function(_, meta)
+    if not config.format_url_titles then return end
+    local path = tracker.current.path
+    if not path or not is_url(path) then return end
+
+    local fmeta = mp.get_property_native("filtered-metadata") or {}
+    local author, title, date = extract_metadata_fields(meta, fmeta)
+    if not title or title == "" or is_url(title) then
+        local raw_title = mp.get_property("media-title")
+        if raw_title and raw_title ~= "" and not is_url(raw_title) then
+            title = raw_title
+        else
+            title = clean_url_title(path)
+        end
+    end
+
+    local formatted = format_media_title(author, title, date)
+    if formatted and (author or date) then
+        apply_formatted_title(path, formatted)
+    end
+end)
+
 mp.register_event("end-file", function()
     seek_history_reset()
     if speed_state and speed_state.is_speeding then
@@ -1401,6 +1884,7 @@ mp.register_event("end-file", function()
     tracker.current.path = nil
     tracker.current.qualified = false
     tracker.current.watch_time = 0
+    tracker.current.formatted_title = nil
 end)
 
 tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)

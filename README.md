@@ -32,6 +32,7 @@ The name mirrors what the script does:
 - **uosc & vanilla OSD**: Native uosc menu with real-time full-history search and hover actions. Automatically falls back to a clean vanilla mpv OSD menu if uosc is not detected.
 - **Unified keyboard navigation**: Both uosc and vanilla menus support arrow-key pagination (`←` / `→` or `h` / `l`), delete (`Del`), prune (`p`), clear (`c`), and restart (`r`).
 - **Folder blacklist**: Exclude specific directories (downloads, temp folders, etc.) from history tracking via `ignore_paths`.
+- **Universal stream & URL metadata**: Formats online streams and video URLs (YouTube, Twitch, Kick, Rumble, and direct media links) as `Author/Creator: Video Title (YYYY-MM-DD)` for mpv OSD and playback history. Universal resolver canonicalizes raw CDN links and queries metadata asynchronously via yt-dlp and platform APIs in the background without interrupting playback.
 
 ---
 
@@ -156,6 +157,9 @@ Adjust options in `~/.config/mpv/script-opts/janus.conf`:
 | `update_interval` | `15` | How often (in seconds) progress is saved while watching |
 | `save_on_pause` | `yes` | Save timestamp when pausing |
 | `log_urls` | `yes` | Log web streams (YouTube, Twitch, etc.) |
+| `format_url_titles` | `yes` | Format URL titles as `Author: Title (YYYY-MM-DD)` |
+| `fetch_url_metadata` | `yes` | Query yt-dlp asynchronously for missing URL metadata |
+| `ytdl_path` | `yt-dlp` | Executable path for yt-dlp |
 | `ignore_paths` | `""` | Comma- or semicolon-separated folders to ignore |
 | `resume_offset` | `0` | Rewind offset in seconds when resuming |
 | `ask_resume` | `yes` | Prompt to resume unfinished files |
