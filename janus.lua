@@ -432,7 +432,7 @@ function storage.append(entry)
     f:close()
 
     storage.append_count = storage.append_count + 1
-    if storage.append_count >= 500 then
+    if storage.append_count >= 200 then
         storage.check_compaction()
     end
     return true
@@ -628,6 +628,12 @@ function storage.compact()
 end
 
 function storage.check_compaction()
+    local info = utils.file_info(history_path)
+    if not info or not info.size then return end
+    if info.size < (config.compaction_threshold * 60) then
+        return
+    end
+
     local f = io.open(history_path, "r")
     if not f then return end
     local lines = 0
@@ -638,6 +644,9 @@ function storage.check_compaction()
         storage.compact()
     end
 end
+
+-- check compaction on startup if history file exceeded size threshold
+storage.check_compaction()
 
 function storage.prune_missing()
     local entries = {}
@@ -1011,7 +1020,7 @@ local function resume_on_tick()
     end
 end
 
-function resume_prompter.check(path)
+function resume_prompter.check(path, cached_entry)
     if resume_suppressed then
         resume_suppressed = false
         return
@@ -1025,8 +1034,25 @@ function resume_prompter.check(path)
     end
     resume_prompt_forced = false
 
-    local entry = storage.get_entry(path)
+    -- live stream guard: skip prompt for live or unseekable streams
+    if is_url(path) then
+        local dur = mp.get_property_number("duration", 0) or 0
+        if dur <= 0 or mp.get_property_bool("demuxer-cache-unseekable", false) then
+            return
+        end
+    end
+
+    local entry
+    if cached_entry ~= nil then
+        entry = cached_entry or nil
+    else
+        entry = storage.get_entry(path)
+    end
     if not entry or not entry.pos then return end
+
+    if is_url(path) and (not entry.duration or tonumber(entry.duration) <= 0) then
+        return
+    end
 
     local pos = tonumber(entry.pos) or 0
     if pos < config.resume_threshold then return end
@@ -1079,6 +1105,12 @@ function resume_prompter.cancel()
         resume_close_ui()
     end
 end
+
+mp.register_event("seek", function()
+    if resume_prompter.is_active then
+        resume_prompter.handle_action("dismiss")
+    end
+end)
 
 
 -- ============================================================================
@@ -1562,8 +1594,50 @@ end)
 -- ============================================================================
 -- URL Metadata Enrichment
 -- ============================================================================
+local url_metadata_cache = {}
+local url_metadata_keys = {}
+local MAX_URL_CACHE = 500
+
+local function cache_url_metadata(url, formatted)
+    if not url or not formatted then return end
+    if not url_metadata_cache[url] then
+        table.insert(url_metadata_keys, url)
+        if #url_metadata_keys > MAX_URL_CACHE then
+            local oldest = table.remove(url_metadata_keys, 1)
+            if oldest then
+                url_metadata_cache[oldest] = nil
+            end
+        end
+    end
+    url_metadata_cache[url] = formatted
+end
+
+local kick_channel_cache = {
+    ["BO2zfdDBEu6T"] = "buddha",
+}
+local kick_channel_keys = {"BO2zfdDBEu6T"}
+local MAX_KICK_CACHE = 100
+
+local function cache_kick_channel(channel_ivs, slug)
+    if not channel_ivs or not slug then return end
+    if not kick_channel_cache[channel_ivs] then
+        table.insert(kick_channel_keys, channel_ivs)
+        if #kick_channel_keys > MAX_KICK_CACHE then
+            local oldest = table.remove(kick_channel_keys, 1)
+            if oldest and oldest ~= "BO2zfdDBEu6T" then
+                kick_channel_cache[oldest] = nil
+            end
+        end
+    end
+    kick_channel_cache[channel_ivs] = slug
+end
+
+local active_fetch_urls = {}
+local active_kick_urls = {}
+
 local function apply_formatted_title(path, formatted)
     if not formatted or formatted == "" then return end
+    cache_url_metadata(path, formatted)
     if not tracker.current.path or not is_same_path(tracker.current.path, path) then return end
     if is_generic_title(formatted) then return end
 
@@ -1594,6 +1668,11 @@ local function apply_formatted_title(path, formatted)
 end
 
 local function try_format_from_mpv_metadata(path)
+    if url_metadata_cache[path] then
+        apply_formatted_title(path, url_metadata_cache[path])
+        return true, true, true
+    end
+
     local meta = mp.get_property_native("metadata") or {}
     local fmeta = mp.get_property_native("filtered-metadata") or {}
     local author, title, date = extract_metadata_fields(meta, fmeta)
@@ -1602,8 +1681,10 @@ local function try_format_from_mpv_metadata(path)
         local raw_title = mp.get_property("media-title")
         if raw_title and raw_title ~= "" and not is_url(raw_title) and not is_generic_title(raw_title) then
             title = raw_title
+        elseif tracker.current.title and not is_url(tracker.current.title) and not is_generic_title(tracker.current.title) then
+            title = tracker.current.title
         else
-            title = storage.get_best_title(path) or clean_url_title(path)
+            title = clean_url_title(path)
         end
     end
 
@@ -1624,11 +1705,14 @@ local function resolve_kick_cdn(url)
     local channel_ivs, stream_id = url:match("stream%.kick%.com/[^/]+/ivs/v1/[^/]+/([^/]+)/%d+/%d+/%d+/%d+/%d+/([^/]+)/")
     if not channel_ivs or not stream_id then return false end
 
-    local slug = nil
-    if channel_ivs == "BO2zfdDBEu6T" then
-        slug = "buddha"
+    if url_metadata_cache[url] then
+        apply_formatted_title(url, url_metadata_cache[url])
+        return true
     end
 
+    if active_kick_urls[url] then return true end
+
+    local slug = kick_channel_cache[channel_ivs]
     if not slug then
         reverse_scan_lines(8192, function(line)
             local ok_json, entry = pcall(utils.parse_json, line)
@@ -1637,6 +1721,7 @@ local function resolve_kick_cdn(url)
                     local creator = entry.title:match("^([^:]+):")
                     if creator and creator ~= "" and not is_generic_title(creator) then
                         slug = creator:lower()
+                        cache_kick_channel(channel_ivs, slug)
                         return true
                     end
                 end
@@ -1646,6 +1731,7 @@ local function resolve_kick_cdn(url)
 
     if not slug then return false end
 
+    active_kick_urls[url] = true
     local api_url = string.format("https://kick.com/api/v2/channels/%s/videos", slug)
     mp.command_native_async({
         name = "subprocess",
@@ -1654,6 +1740,7 @@ local function resolve_kick_cdn(url)
         capture_stdout = true,
         capture_stderr = false,
     }, function(success, res)
+        active_kick_urls[url] = nil
         if not success or not res or res.status ~= 0 or not res.stdout then return end
         local ok_json, data = pcall(utils.parse_json, res.stdout)
         if not ok_json or type(data) ~= "table" then return end
@@ -1717,12 +1804,20 @@ end
 local function fetch_url_metadata(path)
     if not config.fetch_url_metadata or not is_url(path) then return end
 
+    if url_metadata_cache[path] then
+        apply_formatted_title(path, url_metadata_cache[path])
+        return
+    end
+
+    if active_fetch_urls[path] then return end
+
     if path:find("stream%.kick%.com") and resolve_kick_cdn(path) then
         return
     end
 
     if not resolved_ytdl then return end
 
+    active_fetch_urls[path] = true
     local query_url = canonicalize_stream_url(path) or path
 
     local args = {
@@ -1741,6 +1836,7 @@ local function fetch_url_metadata(path)
         capture_stdout = true,
         capture_stderr = true,
     }, function(success, res, err)
+        active_fetch_urls[path] = nil
         if not success or not res or res.status ~= 0 or not res.stdout then
             if res and res.status == -3 then
                 config.fetch_url_metadata = false
@@ -1755,8 +1851,10 @@ local function fetch_url_metadata(path)
             local raw = mp.get_property("media-title")
             if raw and raw ~= "" and not is_url(raw) and not is_generic_title(raw) then
                 t = raw
+            elseif tracker.current.title and not is_url(tracker.current.title) and not is_generic_title(tracker.current.title) then
+                t = tracker.current.title
             else
-                t = storage.get_best_title(path) or clean_url_title(path)
+                t = clean_url_title(path)
             end
         end
         if a == "NA" then a = nil end
@@ -1799,8 +1897,15 @@ mp.register_event("file-loaded", function()
     local duration = mp.get_property_number("duration", 0) or 0
     local pos = mp.get_property_number("time-pos", 0) or 0
 
+    local entry = storage.get_entry(path)
+    local saved_best = nil
+    if entry and entry.title and entry.title ~= "" and not is_url(entry.title) and not is_generic_title(entry.title) then
+        saved_best = entry.title
+    elseif is_url(path) then
+        saved_best = storage.get_best_title(path)
+    end
+
     local title = raw_title
-    local saved_best = storage.get_best_title(path)
     if not title or title == "" or is_url(title) or is_generic_title(title) then
         if saved_best then
             title = saved_best
@@ -1835,7 +1940,7 @@ mp.register_event("file-loaded", function()
         end
     end
 
-    resume_prompter.check(path)
+    resume_prompter.check(path, entry or false)
 
     if config.watch_threshold <= 0 and not resume_prompter.is_active then
         tracker.current.qualified = true
