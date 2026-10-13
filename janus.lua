@@ -374,6 +374,44 @@ local function should_ignore_path(path)
     return false
 end
 
+local function copy_to_clipboard(text)
+    if not text or text == "" then return false end
+    local ok = pcall(mp.set_property, "platform-clipboard", text)
+    if ok then
+        mp.osd_message("Janus: Copied to clipboard", 2)
+        return true
+    end
+
+    local is_windows = package.config:sub(1, 1) == "\\"
+    if is_windows then
+        mp.command_native_async({
+            name = "subprocess",
+            args = {"powershell", "-NoProfile", "-Command", "Set-Clipboard", "-Value", text},
+            playback_only = false,
+        })
+        mp.osd_message("Janus: Copied to clipboard", 2)
+        return true
+    end
+
+    if os.getenv("WAYLAND_DISPLAY") then
+        mp.command_native_async({
+            name = "subprocess",
+            args = {"wl-copy", text},
+            playback_only = false,
+        })
+        mp.osd_message("Janus: Copied to clipboard", 2)
+        return true
+    end
+
+    mp.command_native_async({
+        name = "subprocess",
+        args = {"sh", "-c", 'printf "%s" "$1" | (xclip -selection clipboard 2>/dev/null || xsel -b 2>/dev/null || pbcopy 2>/dev/null)', "--", text},
+        playback_only = false,
+    })
+    mp.osd_message("Janus: Copied to clipboard", 2)
+    return true
+end
+
 -- escape special characters for ASS subtitles/OSD
 local function escape_ass(text)
     if not text then return "" end
@@ -1204,7 +1242,7 @@ local function vanilla_render()
     end
 
     local footer = "{\\fs14\\c&H777777&}------------------------------------------------------------\\N"
-        .. "{\\fs13\\c&H888888&}[↑/↓] Select   [Enter] Resume   [r] Restart   [←/→] Page   [Del] Delete   [Esc/q] Close\\N\\N"
+        .. "{\\fs13\\c&H888888&}[↑/↓] Select   [Enter] Resume   [r] Restart   [y] Copy   [←/→] Page   [Del] Delete   [Esc/q] Close\\N\\N"
         .. "    {\\c&H00D7FF&}[p] Prune Missing Files{\\c&H777777&}   |   {\\c&H0055FF&}[c] Clear All History"
     table.insert(lines, footer)
 
@@ -1342,6 +1380,14 @@ function vanilla_menu.open()
         vanilla_menu.confirm_mode = "clear"
         vanilla_render()
     end)
+    bind("y", "janus_v_copy", function()
+        if vanilla_menu.confirm_mode then return end
+        local items = vanilla_menu.page_data and vanilla_menu.page_data.items or {}
+        local item = items[vanilla_menu.selected_index]
+        if item and item.path then
+            copy_to_clipboard(item.path)
+        end
+    end)
     bind("DEL", "janus_v_del", function()
         if vanilla_menu.confirm_mode then return end
         local items = vanilla_menu.page_data and vanilla_menu.page_data.items or {}
@@ -1424,6 +1470,11 @@ local function uosc_build_item(item, now)
                 label = "Play from beginning (r)",
             },
             {
+                name = "copy",
+                icon = "content_copy",
+                label = "Copy URL or path (y)",
+            },
+            {
                 name = "delete",
                 icon = "delete",
                 label = "Delete from history (del)",
@@ -1454,11 +1505,11 @@ local function uosc_build_menu(page_num, query)
         return {
             type = "janus_history",
             title = string.format("Search: %s (%d matches)", query, #results),
-            footnote = "r Restart  •  del Delete  •  Esc Dismiss",
+            footnote = "r Restart  •  y Copy  •  del Delete  •  Esc Dismiss",
             callback = {"janus", "uosc-event"},
             on_search = {"janus", "uosc-search"},
             search_debounce = 200,
-            bind_keys = {"p", "c", "r"},
+            bind_keys = {"p", "c", "r", "y"},
             items = menu_items,
         }
     end
@@ -1534,11 +1585,11 @@ local function uosc_build_menu(page_num, query)
     return {
         type = "janus_history",
         title = string.format("History - Page %d", page_num),
-        footnote = "←/→ Page  •  r Restart  •  del Delete  •  p Prune  •  c Clear",
+        footnote = "←/→ Page  •  r Restart  •  y Copy  •  del Delete  •  p Prune  •  c Clear",
         callback = {"janus", "uosc-event"},
         on_search = {"janus", "uosc-search"},
         search_debounce = 200,
-        bind_keys = {"p", "c", "r"},
+        bind_keys = {"p", "c", "r", "y"},
         items = menu_items,
     }
 end
@@ -2361,6 +2412,11 @@ mp.register_script_message("uosc-event", function(json_str)
                     duration = val.duration,
                 }, true)
             end
+        elseif event.action == "copy" then
+            local path = val and val.path
+            if path then
+                copy_to_clipboard(path)
+            end
         elseif val and type(val) == "table" then
             if val.action == "confirm_prune" then
                 uosc_show_prune_confirm()
@@ -2428,6 +2484,12 @@ mp.register_script_message("uosc-event", function(json_str)
                     uosc_menu.update(uosc_menu.current_page or 1)
                 end
             end
+        elseif key == "y" then
+            local sel = event.selected_item and event.selected_item.value
+            local path = sel and sel.path
+            if path then
+                copy_to_clipboard(path)
+            end
         elseif key == "r" then
             local sel = event.selected_item and event.selected_item.value
             local path = sel and sel.path
@@ -2469,6 +2531,13 @@ mp.register_script_message("play", function(path, pos, duration)
         pos = tonumber(pos) or 0,
         duration = tonumber(duration) or 0,
     })
+end)
+
+mp.register_script_message("copy-path", function(path)
+    path = path or mp.get_property("path")
+    if path and path ~= "" then
+        copy_to_clipboard(path)
+    end
 end)
 
 mp.register_script_message("delete", function(path)

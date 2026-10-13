@@ -128,6 +128,7 @@ When opening an unfinished video, a prompt appears:
 - **`Enter`**: Resume from saved timestamp.
 - **`r`** / **`b`** / **`Home`**: Play from the beginning (`00:00`).
 - **`Esc`** / **`q`**: Dismiss prompt and continue playback from start.
+- Seeking manually or pressing playback keys dismisses the prompt immediately.
 - If left alone, it automatically resumes after 10 seconds.
 
 ### History Menu (uosc & Vanilla)
@@ -135,6 +136,7 @@ Both menu interfaces support the same navigation shortcuts:
 - **`↑` / `↓`** (or **`k` / `j`**): Move selection up / down.
 - **`Enter`** (or Click): Directly resume playback from saved timestamp.
 - **`r`** (or **`replay`** icon): Restart playback from the beginning (`00:00`).
+- **`y`** (or **`content_copy`** icon): Copy file path or stream URL to system clipboard.
 - **`←` / `→`** (or **`h` / `l`**): Previous / next page.
 - **`Del`** (or **`delete`** icon / **`Backspace`**): Remove selected item from history.
 - **`p`**: Prune all missing/deleted files from history (with confirmation).
