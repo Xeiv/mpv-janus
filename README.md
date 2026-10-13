@@ -24,8 +24,9 @@ The name mirrors what the script does:
 - **Direct resume in menu**: Selecting a video from the history menu resumes immediately without prompting. Hovering over the item reveals a `replay` action (or press `r`) to start from `00:00`.
 - **Completion cutoff (95%)**: If you stop near the end of a video (past 95% or within the last 15 seconds), Janus treats it as completed and starts from `00:00` next time without prompting.
 - **Resume from idle**: Press `Space` in an empty mpv window to immediately load and resume your last watched video.
-- **Seek undo & redo (`Ctrl+Z` / `Ctrl+X`)**: Revert accidental timeline seeks or chapter jumps. Rapid seeks within 1 second are grouped so one press reverts the entire sequence.
+- **Seek undo & redo (`Ctrl+Z` / `Ctrl+X`)**: Revert accidental timeline seeks or chapter jumps with jump delta and destination feedback (e.g. `↩ -0:45 (to 14:20)`). Rapid seeks within 1 second are grouped so one press reverts the entire sequence.
 - **Hold to speed up (2.0x)**: Press and hold `Space` or `Right-Click` to temporarily play at 2x speed. Release to return to 1x. Quick taps play or pause as normal. Toggle 2x anytime with `Alt+n`.
+- **Now playing indicator**: Highlights and marks the currently active video in both uosc and vanilla history menus.
 - **Missing file detection**: Videos that were moved, deleted, or located on disconnected drives are marked with `[Deleted or Moved]`.
 - **Prune & clear**: Remove all dead/missing files from history with **Prune Missing Files** (`p`), or wipe history completely with **Clear All History** (`c`). Both require confirmation.
 - **uosc & vanilla OSD**: Native uosc menu with real-time full-history search and hover actions. Automatically falls back to a clean vanilla mpv OSD menu if uosc is not detected.

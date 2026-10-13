@@ -86,6 +86,19 @@ local function format_duration(seconds)
     end
 end
 
+local function format_delta(seconds)
+    local sign = seconds >= 0 and "+" or "-"
+    local total = math.abs(math.floor(seconds + 0.5))
+    local h = math.floor(total / 3600)
+    local m = math.floor((total % 3600) / 60)
+    local s = total % 60
+    if h > 0 then
+        return string.format("%s%d:%02d:%02d", sign, h, m, s)
+    else
+        return string.format("%s%d:%02d", sign, m, s)
+    end
+end
+
 -- relative time helper for menu items
 local function format_relative_time(epoch, now)
     if not epoch or epoch <= 0 then return "" end
@@ -904,11 +917,14 @@ local function vanilla_render()
     if #items == 0 then
         table.insert(lines, "{\\c&H888888&}   (No history entries found)\\N\\N")
     else
+        local current_path = mp.get_property("path")
         for i, item in ipairs(items) do
             local is_selected = (i == vanilla_menu.selected_index)
-            local prefix = is_selected and "{\\fs16\\b1\\c&H00FFFF&} ▶ " or "{\\fs16\\c&H888888&}   "
-            local title = escape_ass(truncate_string(item.title or get_filename(item.path), 55))
-            local title_color = is_selected and "{\\fs16\\c&HFFFFFF&\\b1}" or "{\\fs16\\c&HD0D0D0&\\b0}"
+            local is_current = is_same_path(current_path, item.path)
+            local prefix = is_selected and "{\\fs16\\b1\\c&H00FFFF&} ▶ " or (is_current and "{\\fs16\\b1\\c&H00FF7F&} ● " or "{\\fs16\\c&H888888&}   ")
+            local max_len = is_current and 40 or 55
+            local title = escape_ass(truncate_string(item.title or get_filename(item.path), max_len))
+            local title_color = is_selected and "{\\fs16\\c&HFFFFFF&\\b1}" or (is_current and "{\\fs16\\c&H00FF7F&\\b1}" or "{\\fs16\\c&HD0D0D0&\\b0}")
 
             local exists = file_exists(item.path)
             local pos = tonumber(item.pos) or 0
@@ -922,6 +938,7 @@ local function vanilla_render()
                 title_color = "{\\fs16\\c&H888888&}"
             end
 
+            local badge = is_current and " {\\fs14\\c&H00FF7F&\\b1}[Now Playing]{\\b0}" or ""
             local meta
             if not exists then
                 meta = string.format("{\\fs16\\c&H999999&}  •  %s", rel_time)
@@ -932,7 +949,7 @@ local function vanilla_render()
                 meta = string.format("{\\fs16\\c&H999999&}  [%s]  •  %s", pos_str, rel_time)
             end
 
-            table.insert(lines, string.format("%s%s%s%s\\N", prefix, title_color, title, meta))
+            table.insert(lines, string.format("%s%s%s%s%s\\N", prefix, title_color, title, badge, meta))
         end
         table.insert(lines, "\\N")
     end
@@ -1113,6 +1130,8 @@ local uosc_menu = {
 
 local function uosc_build_item(item, now)
     local title = item.title or get_filename(item.path)
+    local current_path = mp.get_property("path")
+    local is_current = is_same_path(current_path, item.path)
     local exists = file_exists(item.path)
     local pos = tonumber(item.pos) or 0
     local dur = tonumber(item.duration) or 0
@@ -1131,10 +1150,16 @@ local function uosc_build_item(item, now)
         hint_str = string.format("%s  •  %s", pos_str, rel_time)
     end
 
+    if is_current then
+        hint_str = string.format("[Now Playing]  •  %s", hint_str)
+    end
+
     return {
         title = display_title,
         hint = hint_str,
-        icon = exists and "history" or "error",
+        icon = not exists and "error" or (is_current and "play_circle" or "history"),
+        active = is_current,
+        bold = is_current,
         muted = not exists,
         value = {
             action = "play",
@@ -1564,12 +1589,14 @@ local function seek_undo()
         return
     end
 
+    local current_pos = mp.get_property_number("time-pos", 0)
     seek_history.index = seek_history.index - 1
     local target_pos = seek_history.stack[seek_history.index]
+    local delta = target_pos - current_pos
 
     seek_history.is_navigating = true
     mp.commandv("seek", tostring(target_pos), "absolute", "exact")
-    mp.osd_message(string.format("↩ Seek Undo: %s", format_duration(target_pos)), 1.5)
+    mp.osd_message(string.format("↩ %s (to %s)", format_delta(delta), format_duration(target_pos)), 1.5)
 
     mp.add_timeout(0.5, function()
         seek_history.last_normal_pos = target_pos
@@ -1587,12 +1614,14 @@ local function seek_redo()
         return
     end
 
+    local current_pos = mp.get_property_number("time-pos", 0)
     seek_history.index = seek_history.index + 1
     local target_pos = seek_history.stack[seek_history.index]
+    local delta = target_pos - current_pos
 
     seek_history.is_navigating = true
     mp.commandv("seek", tostring(target_pos), "absolute", "exact")
-    mp.osd_message(string.format("↪ Seek Redo: %s", format_duration(target_pos)), 1.5)
+    mp.osd_message(string.format("↪ %s (to %s)", format_delta(delta), format_duration(target_pos)), 1.5)
 
     mp.add_timeout(0.5, function()
         seek_history.last_normal_pos = target_pos
