@@ -523,6 +523,7 @@ local tracker = {
 
 local resume_prompter
 local resume_prompt_forced = false
+local resume_suppressed = false
 local seek_history_reset = function() end
 
 local function record_history(entry)
@@ -564,7 +565,14 @@ local function play_history_item(item, direct_resume)
         end
     end
 
-    if not direct_resume and config.ask_resume and start_pos >= config.resume_threshold then
+    if direct_resume then
+        resume_suppressed = true
+        if start_pos > 0 then
+            mp.commandv("loadfile", item.path, "replace", "-1", "start=" .. tostring(start_pos))
+        else
+            mp.commandv("loadfile", item.path, "replace")
+        end
+    elseif config.ask_resume and start_pos >= config.resume_threshold then
         -- load from beginning so file-loaded shows the resume prompt
         resume_prompt_forced = true
         mp.commandv("loadfile", item.path, "replace")
@@ -774,6 +782,10 @@ local function resume_on_tick()
 end
 
 function resume_prompter.check(path)
+    if resume_suppressed then
+        resume_suppressed = false
+        return
+    end
     if not config.ask_resume or not path or path == "" or should_ignore_path(path) then return end
     if not config.log_urls and is_url(path) then return end
 
@@ -882,7 +894,7 @@ local function vanilla_render()
 
     local lines = {"{\\an7\\fs16\\bord1.5\\shad1}"}
     local header = string.format(
-        "{\\b1\\fs22\\c&H00D7FF&}JANUS HISTORY{\\c&HFFFFFF&\\b0\\fs16}  —  Page %d %s%s\n\\N",
+        "{\\b1\\fs20\\c&H00D7FF&}JANUS HISTORY{\\c&HFFFFFF&\\b0\\fs16}  -  Page %d %s%s\\N\\N",
         vanilla_menu.current_page,
         page.has_prev and "{\\c&H00D7FF&}◀ [Left]{\\c&HFFFFFF&} " or "   ",
         page.has_next and "{\\c&H00D7FF&}[Right] ▶{\\c&HFFFFFF&}" or ""
@@ -894,9 +906,9 @@ local function vanilla_render()
     else
         for i, item in ipairs(items) do
             local is_selected = (i == vanilla_menu.selected_index)
-            local prefix = is_selected and "{\\b1\\c&H00FFFF&} ▶ " or "{\\c&H888888&}   "
+            local prefix = is_selected and "{\\fs16\\b1\\c&H00FFFF&} ▶ " or "{\\fs16\\c&H888888&}   "
             local title = escape_ass(truncate_string(item.title or get_filename(item.path), 55))
-            local title_color = is_selected and "{\\c&HFFFFFF&\\b1}" or "{\\c&HD0D0D0&\\b0}"
+            local title_color = is_selected and "{\\fs16\\c&HFFFFFF&\\b1}" or "{\\fs16\\c&HD0D0D0&\\b0}"
 
             local exists = file_exists(item.path)
             local pos = tonumber(item.pos) or 0
@@ -907,17 +919,17 @@ local function vanilla_render()
 
             if not exists then
                 title = string.format("{\\s1}%s{\\s0} {\\c&HFF6666&}[Deleted or Moved]", title)
-                title_color = "{\\c&H888888&}"
+                title_color = "{\\fs16\\c&H888888&}"
             end
 
             local meta
             if not exists then
-                meta = string.format("{\\c&H999999&\\fs14}  •  %s", rel_time)
+                meta = string.format("{\\fs16\\c&H999999&}  •  %s", rel_time)
             elseif dur > 0 then
                 local percent = math.min(100, math.floor((pos / dur) * 100))
-                meta = string.format("{\\c&H999999&\\fs14}  [%s / %s (%d%%)]  •  %s", pos_str, dur_str, percent, rel_time)
+                meta = string.format("{\\fs16\\c&H999999&}  [%s / %s (%d%%)]  •  %s", pos_str, dur_str, percent, rel_time)
             else
-                meta = string.format("{\\c&H999999&\\fs14}  [%s]  •  %s", pos_str, rel_time)
+                meta = string.format("{\\fs16\\c&H999999&}  [%s]  •  %s", pos_str, rel_time)
             end
 
             table.insert(lines, string.format("%s%s%s%s\\N", prefix, title_color, title, meta))
@@ -926,7 +938,8 @@ local function vanilla_render()
     end
 
     local footer = "{\\fs14\\c&H777777&}------------------------------------------------------------\\N"
-        .. "{\\fs14\\c&HAAAAAA&}[↑/↓] Select   [Enter] Play   [←/→] Page   [Del] Delete   [p] Prune   [c] Clear   [Esc/q] Close"
+        .. "{\\fs13\\c&H888888&}[↑/↓] Select   [Enter] Resume   [r] Restart   [←/→] Page   [Del] Delete   [Esc/q] Close\\N\\N"
+        .. "    {\\c&H00D7FF&}[p] Prune Missing Files{\\c&H777777&}   |   {\\c&H0055FF&}[c] Clear All History"
     table.insert(lines, footer)
 
     vanilla_menu.overlay.data = table.concat(lines)
@@ -1035,7 +1048,24 @@ function vanilla_menu.open()
                 return
             end
             vanilla_menu.close()
-            play_history_item(item)
+            play_history_item(item, true)
+        end
+    end)
+    bind("r", "janus_v_restart", function()
+        if vanilla_menu.confirm_mode then return end
+        local items = vanilla_menu.page_data and vanilla_menu.page_data.items or {}
+        local item = items[vanilla_menu.selected_index]
+        if item then
+            if not is_url(item.path) and not file_exists(item.path) then
+                mp.osd_message("Janus: File has been moved or deleted", 3)
+                return
+            end
+            vanilla_menu.close()
+            play_history_item({
+                path = item.path,
+                pos = 0,
+                duration = item.duration,
+            }, true)
         end
     end)
     bind("p", "janus_v_prune", function()
@@ -1115,9 +1145,14 @@ local function uosc_build_item(item, now)
         },
         actions = {
             {
+                name = "replay",
+                icon = "replay",
+                label = "Play from beginning (r)",
+            },
+            {
                 name = "delete",
                 icon = "delete",
-                label = "Delete from history",
+                label = "Delete from history (del)",
             },
         },
     }
@@ -1145,9 +1180,11 @@ local function uosc_build_menu(page_num, query)
         return {
             type = "janus_history",
             title = string.format("Search: %s (%d matches)", query, #results),
+            footnote = "r Restart  •  del Delete  •  Esc Dismiss",
             callback = {"janus", "uosc-event"},
             on_search = {"janus", "uosc-search"},
             search_debounce = 200,
+            bind_keys = {"p", "c", "r"},
             items = menu_items,
         }
     end
@@ -1203,8 +1240,8 @@ local function uosc_build_menu(page_num, query)
     })
     table.insert(menu_items, {
         title = "Prune Missing Files",
-        hint = "Remove deleted or moved videos",
         icon = "delete_sweep",
+        align = "center",
         keep_open = true,
         value = {
             action = "confirm_prune",
@@ -1212,8 +1249,8 @@ local function uosc_build_menu(page_num, query)
     })
     table.insert(menu_items, {
         title = "Clear All History",
-        hint = "Permanently erase watch history",
         icon = "delete_forever",
+        align = "center",
         keep_open = true,
         value = {
             action = "confirm_clear",
@@ -1222,10 +1259,12 @@ local function uosc_build_menu(page_num, query)
 
     return {
         type = "janus_history",
-        title = string.format("History — Page %d", page_num),
+        title = string.format("History - Page %d", page_num),
+        footnote = "←/→ Page  •  r Restart  •  del Delete  •  p Prune  •  c Clear",
         callback = {"janus", "uosc-event"},
         on_search = {"janus", "uosc-search"},
         search_debounce = 200,
+        bind_keys = {"p", "c", "r"},
         items = menu_items,
     }
 end
@@ -1627,93 +1666,165 @@ mp.register_script_message("open-vanilla", function() vanilla_menu.open() end)
 mp.register_script_message("open-uosc", function(page) uosc_menu.open(tonumber(page) or 1) end)
 mp.register_script_message("uosc-page", function(page) uosc_menu.update(tonumber(page) or 1) end)
 
+local function uosc_show_prune_confirm()
+    local confirm_menu = {
+        type = "janus_confirm",
+        title = "Prune Missing Files?",
+        footnote = "Remove all deleted or moved files from history.",
+        callback = {"janus", "uosc-event"},
+        items = {
+            {
+                title = "Yes, prune missing files",
+                icon = "delete_sweep",
+                value = { action = "do_prune" },
+            },
+            {
+                title = "Cancel",
+                icon = "close",
+                value = { action = "cancel_confirm" },
+            },
+        },
+    }
+    mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json(confirm_menu))
+end
+
+local function uosc_show_clear_confirm()
+    local confirm_menu = {
+        type = "janus_confirm",
+        title = "Clear All History?",
+        footnote = "Permanently delete all playback history. This cannot be undone.",
+        callback = {"janus", "uosc-event"},
+        items = {
+            {
+                title = "Yes, clear all history",
+                icon = "delete_forever",
+                bold = true,
+                value = { action = "do_clear" },
+            },
+            {
+                title = "Cancel",
+                icon = "close",
+                value = { action = "cancel_confirm" },
+            },
+        },
+    }
+    mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json(confirm_menu))
+end
+
 mp.register_script_message("uosc-event", function(json_str)
     local event = utils.parse_json(json_str)
-    if not event or event.type ~= "activate" then return end
+    if not event then return end
 
-    local val = event.value
-    if event.action == "delete" then
-        local path = val and val.path
-        if path then
-            storage.remove(path)
-            msg.info("Janus: removed from history: " .. path)
-            if uosc_menu.search_query and uosc_menu.search_query ~= "" then
-                local json = utils.format_json(uosc_build_menu(nil, uosc_menu.search_query))
-                mp.commandv("script-message-to", "uosc", "update-menu", json)
-            else
+    if event.type == "activate" then
+        local val = event.value
+        if event.action == "delete" then
+            local path = val and val.path
+            if path then
+                storage.remove(path)
+                msg.info("Janus: removed from history: " .. path)
+                if uosc_menu.search_query and uosc_menu.search_query ~= "" then
+                    local json = utils.format_json(uosc_build_menu(nil, uosc_menu.search_query))
+                    mp.commandv("script-message-to", "uosc", "update-menu", json)
+                else
+                    uosc_menu.update(uosc_menu.current_page or 1)
+                end
+            end
+        elseif event.action == "replay" then
+            local path = val and val.path
+            if path then
+                if val.missing or (not is_url(path) and not file_exists(path)) then
+                    mp.osd_message("Janus: File has been moved or deleted", 3)
+                    return
+                end
+                mp.commandv("script-message-to", "uosc", "close-menu", "janus_history")
+                play_history_item({
+                    path = path,
+                    pos = 0,
+                    duration = val.duration,
+                }, true)
+            end
+        elseif val and type(val) == "table" then
+            if val.action == "confirm_prune" then
+                uosc_show_prune_confirm()
+            elseif val.action == "confirm_clear" then
+                uosc_show_clear_confirm()
+            elseif val.action == "do_prune" then
+                local count = storage.prune_missing()
+                if count == 0 then
+                    mp.osd_message("Janus: No missing files found", 2)
+                else
+                    mp.osd_message(string.format("Janus: Pruned %d missing file%s", count, count == 1 and "" or "s"), 2)
+                end
+                uosc_menu.update(1)
+            elseif val.action == "do_clear" then
+                storage.clear()
+                mp.osd_message("Janus: Playback history cleared", 2)
+                uosc_menu.update(1)
+            elseif val.action == "cancel_confirm" then
                 uosc_menu.update(uosc_menu.current_page or 1)
+            elseif val.action == "page" then
+                uosc_menu.search_query = nil
+                uosc_menu.update(val.page)
+            elseif val.action == "play" then
+                if val.missing or (not is_url(val.path) and not file_exists(val.path)) then
+                    mp.osd_message("Janus: File has been moved or deleted", 3)
+                    return
+                end
+                mp.commandv("script-message-to", "uosc", "close-menu", "janus_history")
+                play_history_item({
+                    path = val.path,
+                    pos = val.pos,
+                    duration = val.duration,
+                }, true)
             end
         end
-    elseif val and type(val) == "table" then
-        if val.action == "confirm_prune" then
-            local confirm_menu = {
-                type = "janus_confirm",
-                title = "Prune Missing Files?",
-                footnote = "Remove all deleted or moved files from history.",
-                callback = {"janus", "uosc-event"},
-                items = {
-                    {
-                        title = "Yes, prune missing files",
-                        icon = "delete_sweep",
-                        value = { action = "do_prune" },
-                    },
-                    {
-                        title = "Cancel",
-                        icon = "close",
-                        value = { action = "cancel_confirm" },
-                    },
-                },
-            }
-            mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json(confirm_menu))
-        elseif val.action == "confirm_clear" then
-            local confirm_menu = {
-                type = "janus_confirm",
-                title = "Clear All History?",
-                footnote = "Permanently delete all playback history. This cannot be undone.",
-                callback = {"janus", "uosc-event"},
-                items = {
-                    {
-                        title = "Yes, clear all history",
-                        icon = "delete_forever",
-                        bold = true,
-                        value = { action = "do_clear" },
-                    },
-                    {
-                        title = "Cancel",
-                        icon = "close",
-                        value = { action = "cancel_confirm" },
-                    },
-                },
-            }
-            mp.commandv("script-message-to", "uosc", "open-menu", utils.format_json(confirm_menu))
-        elseif val.action == "do_prune" then
-            local count = storage.prune_missing()
-            if count == 0 then
-                mp.osd_message("Janus: No missing files found", 2)
-            else
-                mp.osd_message(string.format("Janus: Pruned %d missing file%s", count, count == 1 and "" or "s"), 2)
+    elseif event.type == "key" then
+        local key = event.key or event.id
+        if key == "left" or key == "h" then
+            local cur_page = uosc_menu.current_page or 1
+            if cur_page > 1 then
+                uosc_menu.search_query = nil
+                uosc_menu.update(cur_page - 1)
             end
-            uosc_menu.update(1)
-        elseif val.action == "do_clear" then
-            storage.clear()
-            mp.osd_message("Janus: Playback history cleared", 2)
-            uosc_menu.update(1)
-        elseif val.action == "cancel_confirm" then
-            uosc_menu.update(uosc_menu.current_page or 1)
-        elseif val.action == "page" then
-            uosc_menu.search_query = nil
-            uosc_menu.update(val.page)
-        elseif val.action == "play" then
-            if val.missing or (not is_url(val.path) and not file_exists(val.path)) then
-                mp.osd_message("Janus: File has been moved or deleted", 3)
-                return
+        elseif key == "right" or key == "l" then
+            local cur_page = uosc_menu.current_page or 1
+            local page_data = storage.get_page(cur_page)
+            if page_data and page_data.has_next then
+                uosc_menu.search_query = nil
+                uosc_menu.update(cur_page + 1)
             end
-            mp.commandv("script-message-to", "uosc", "close-menu", "janus_history")
-            play_history_item({
-                path = val.path,
-                pos = val.pos,
-                duration = val.duration,
-            })
+        elseif key == "p" then
+            uosc_show_prune_confirm()
+        elseif key == "c" then
+            uosc_show_clear_confirm()
+        elseif key == "del" then
+            local sel = event.selected_item and event.selected_item.value
+            local path = sel and sel.path
+            if path then
+                storage.remove(path)
+                msg.info("Janus: removed from history via [Del]: " .. path)
+                if uosc_menu.search_query and uosc_menu.search_query ~= "" then
+                    local json = utils.format_json(uosc_build_menu(nil, uosc_menu.search_query))
+                    mp.commandv("script-message-to", "uosc", "update-menu", json)
+                else
+                    uosc_menu.update(uosc_menu.current_page or 1)
+                end
+            end
+        elseif key == "r" then
+            local sel = event.selected_item and event.selected_item.value
+            local path = sel and sel.path
+            if path then
+                if sel.missing or (not is_url(path) and not file_exists(path)) then
+                    mp.osd_message("Janus: File has been moved or deleted", 3)
+                    return
+                end
+                mp.commandv("script-message-to", "uosc", "close-menu", "janus_history")
+                play_history_item({
+                    path = path,
+                    pos = 0,
+                    duration = sel.duration,
+                }, true)
+            end
         end
     end
 end)
