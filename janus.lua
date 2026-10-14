@@ -184,6 +184,8 @@ local function clean_url_title(url)
     return name
 end
 
+---@param raw_date any
+---@return string?
 local function format_date(raw_date)
     if not raw_date or raw_date == "" or raw_date == "NA" then return nil end
     raw_date = tostring(raw_date):match("^%s*(.-)%s*$")
@@ -200,7 +202,7 @@ local function format_date(raw_date)
 
     local num = tonumber(raw_date)
     if num and num > 946684800 and num < 4102444800 then
-        return os.date("!%Y-%m-%d", num)
+        return tostring(os.date("!%Y-%m-%d", num))
     end
 
     local year = raw_date:match("^(%d%d%d%d)$")
@@ -376,38 +378,88 @@ end
 
 local function copy_to_clipboard(text)
     if not text or text == "" then return false end
-    local ok = pcall(mp.set_property, "platform-clipboard", text)
-    if ok then
+
+    -- Native mpv clipboard (supported on Windows win32, Linux X11/Wayland, macOS)
+    local success = mp.set_property("clipboard/text", text)
+    if success then
+        pcall(mp.set_property, "clipboard/text-primary", text)
         mp.osd_message("Janus: Copied to clipboard", 2)
         return true
     end
 
-    local is_windows = package.config:sub(1, 1) == "\\"
+    -- Fallback for environments where native mpv clipboard property is unavailable
+    local is_windows = package.config:sub(1, 1) == "\\" or os.getenv("windir") ~= nil
     if is_windows then
+        -- Try clip.exe via stdin (built into all Windows versions, zero overhead)
         mp.command_native_async({
             name = "subprocess",
-            args = {"powershell", "-NoProfile", "-Command", "Set-Clipboard", "-Value", text},
+            args = {"clip"},
             playback_only = false,
-        })
+            stdin_data = text,
+        }, function(ok, res)
+            if not ok or not res or res.status ~= 0 then
+                -- Fallback to PowerShell Set-Clipboard via stdin
+                mp.command_native_async({
+                    name = "subprocess",
+                    args = {"powershell", "-NoProfile", "-Command", "$input | Set-Clipboard"},
+                    playback_only = false,
+                    stdin_data = text,
+                })
+            end
+        end)
         mp.osd_message("Janus: Copied to clipboard", 2)
         return true
     end
 
-    if os.getenv("WAYLAND_DISPLAY") then
+    -- Linux Wayland fallback
+    if os.getenv("WAYLAND_DISPLAY") and os.getenv("WAYLAND_DISPLAY") ~= "" then
         mp.command_native_async({
             name = "subprocess",
-            args = {"wl-copy", text},
+            args = {"wl-copy"},
             playback_only = false,
-        })
+            stdin_data = text,
+        }, function(ok, res)
+            if not ok or not res or res.status ~= 0 then
+                -- Fallback to xclip if running under XWayland
+                mp.command_native_async({
+                    name = "subprocess",
+                    args = {"xclip", "-selection", "clipboard"},
+                    playback_only = false,
+                    stdin_data = text,
+                })
+            end
+        end)
         mp.osd_message("Janus: Copied to clipboard", 2)
         return true
     end
 
+    -- Linux X11 fallback
     mp.command_native_async({
         name = "subprocess",
-        args = {"sh", "-c", 'printf "%s" "$1" | (xclip -selection clipboard 2>/dev/null || xsel -b 2>/dev/null || pbcopy 2>/dev/null)', "--", text},
+        args = {"xclip", "-selection", "clipboard"},
         playback_only = false,
-    })
+        stdin_data = text,
+    }, function(ok, res)
+        if not ok or not res or res.status ~= 0 then
+            mp.command_native_async({
+                name = "subprocess",
+                args = {"xsel", "-b", "-i"},
+                playback_only = false,
+                stdin_data = text,
+            }, function(ok2, res2)
+                if not ok2 or not res2 or res2.status ~= 0 then
+                    -- macOS fallback
+                    mp.command_native_async({
+                        name = "subprocess",
+                        args = {"pbcopy"},
+                        playback_only = false,
+                        stdin_data = text,
+                    })
+                end
+            end)
+        end
+    end)
+
     mp.osd_message("Janus: Copied to clipboard", 2)
     return true
 end
