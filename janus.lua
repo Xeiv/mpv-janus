@@ -633,25 +633,6 @@ function storage.get_entry(target_path)
     return result
 end
 
-function storage.get_best_title(target_path)
-    if not target_path or target_path == "" then return nil end
-    local best_title = nil
-
-    reverse_scan_lines(8192, function(line)
-        local ok_json, entry = pcall(utils.parse_json, line)
-        if ok_json and type(entry) == "table" and entry.path == target_path then
-            if not entry.deleted and entry.title and entry.title ~= "" then
-                if not is_url(entry.title) and not is_generic_title(entry.title) then
-                    best_title = entry.title
-                    return true
-                end
-            end
-        end
-    end)
-
-    return best_title
-end
-
 function storage.remove(target_path)
     if not target_path or target_path == "" then return false end
     return storage.append({
@@ -894,6 +875,8 @@ local function play_history_item(item, direct_resume)
         end
     end
 
+    mp.set_property("force-media-title", "")
+
     if direct_resume then
         resume_suppressed = true
         if start_pos > 0 then
@@ -947,7 +930,12 @@ local function tracker_save()
 
     tracker.current.pos = mp.get_property_number("time-pos", tracker.current.pos) or tracker.current.pos
     tracker.current.duration = mp.get_property_number("duration", tracker.current.duration) or tracker.current.duration
-    local title = tracker.current.formatted_title or mp.get_property("media-title")
+    local title
+    if is_url(tracker.current.path) then
+        title = tracker.current.formatted_title or mp.get_property("media-title")
+    else
+        title = tracker.current.title or get_filename(tracker.current.path)
+    end
     if title and title ~= "" then
         tracker.current.title = title
     end
@@ -1744,13 +1732,6 @@ local function apply_formatted_title(path, formatted)
     if not tracker.current.path or not is_same_path(tracker.current.path, path) then return end
     if is_generic_title(formatted) then return end
 
-    -- Do not overwrite an existing creator title with one lacking creator
-    if tracker.current.title and not is_generic_title(tracker.current.title) and not is_url(tracker.current.title) then
-        if not formatted:find(":") and tracker.current.title:find(":") then
-            return
-        end
-    end
-
     if tracker.current.formatted_title == formatted then return end
 
     tracker.current.formatted_title = formatted
@@ -1983,6 +1964,10 @@ end
 -- mpv Events
 -- ============================================================================
 
+mp.register_event("start-file", function()
+    mp.set_property("force-media-title", "")
+end)
+
 mp.register_event("file-loaded", function()
     seek_history_reset()
     local path = mp.get_property("path")
@@ -2001,21 +1986,15 @@ mp.register_event("file-loaded", function()
     local pos = mp.get_property_number("time-pos", 0) or 0
 
     local entry = storage.get_entry(path)
-    local saved_best = nil
-    if entry and entry.title and entry.title ~= "" and not is_url(entry.title) and not is_generic_title(entry.title) then
-        saved_best = entry.title
-    elseif is_url(path) then
-        saved_best = storage.get_best_title(path)
-    end
 
     local title = raw_title
     if not title or title == "" or is_url(title) or is_generic_title(title) then
-        if saved_best then
-            title = saved_best
+        if not is_url(path) and entry and entry.title and entry.title ~= "" and not is_generic_title(entry.title) then
+            title = entry.title
         elseif raw_title and raw_title ~= "" and not is_url(raw_title) then
             title = raw_title
         else
-            title = get_filename(path)
+            title = is_url(path) and clean_url_title(path) or get_filename(path)
         end
     end
 
@@ -2030,11 +2009,6 @@ mp.register_event("file-loaded", function()
     }
 
     tracker.is_paused = mp.get_property_bool("pause", false)
-
-    if saved_best and (not raw_title or is_url(raw_title) or is_generic_title(raw_title)) then
-        tracker.current.formatted_title = saved_best
-        mp.set_property("force-media-title", saved_best)
-    end
 
     if config.format_url_titles and is_url(path) then
         local ok, has_author, has_date = try_format_from_mpv_metadata(path)
@@ -2089,6 +2063,7 @@ mp.register_event("end-file", function()
     if tracker.current.qualified then
         tracker_save()
     end
+    mp.set_property("force-media-title", "")
     tracker.current.path = nil
     tracker.current.qualified = false
     tracker.current.watch_time = 0
