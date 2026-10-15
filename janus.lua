@@ -499,13 +499,27 @@ local storage = {
 local function ensure_dir(path)
     local dir = path:match("^(.*)[/\\]")
     if not dir or dir == "" then return end
-    mp.command_native({
-        name = "subprocess",
-        args = {"mkdir", "-p", dir},
-        playback_only = false,
-        capture_stdout = false,
-        capture_stderr = false,
-    })
+    local info = utils.file_info(dir)
+    if info and info.is_dir then return end
+
+    local is_windows = package.config:sub(1, 1) == "\\" or os.getenv("windir") ~= nil
+    if is_windows then
+        mp.command_native({
+            name = "subprocess",
+            args = {"cmd.exe", "/c", "if not exist " .. string.format("%q", dir) .. " mkdir " .. string.format("%q", dir)},
+            playback_only = false,
+            capture_stdout = false,
+            capture_stderr = false,
+        })
+    else
+        mp.command_native({
+            name = "subprocess",
+            args = {"mkdir", "-p", dir},
+            playback_only = false,
+            capture_stdout = false,
+            capture_stderr = false,
+        })
+    end
 end
 
 function storage.append(entry)
@@ -687,11 +701,23 @@ function storage.compact()
     f:close()
 
     if not os.rename(tmp_path, history_path) then
-        mp.command_native({
-            name = "subprocess",
-            args = {"mv", "-f", tmp_path, history_path},
-            playback_only = false,
-        })
+        os.remove(history_path)
+        if not os.rename(tmp_path, history_path) then
+            local is_windows = package.config:sub(1, 1) == "\\" or os.getenv("windir") ~= nil
+            if is_windows then
+                mp.command_native({
+                    name = "subprocess",
+                    args = {"cmd.exe", "/c", "move /y " .. string.format("%q", tmp_path) .. " " .. string.format("%q", history_path)},
+                    playback_only = false,
+                })
+            else
+                mp.command_native({
+                    name = "subprocess",
+                    args = {"mv", "-f", tmp_path, history_path},
+                    playback_only = false,
+                })
+            end
+        end
     end
 
     storage.append_count = 0
@@ -759,11 +785,23 @@ function storage.prune_missing()
     f:close()
 
     if not os.rename(tmp_path, history_path) then
-        mp.command_native({
-            name = "subprocess",
-            args = {"mv", "-f", tmp_path, history_path},
-            playback_only = false,
-        })
+        os.remove(history_path)
+        if not os.rename(tmp_path, history_path) then
+            local is_windows = package.config:sub(1, 1) == "\\" or os.getenv("windir") ~= nil
+            if is_windows then
+                mp.command_native({
+                    name = "subprocess",
+                    args = {"cmd.exe", "/c", "move /y " .. string.format("%q", tmp_path) .. " " .. string.format("%q", history_path)},
+                    playback_only = false,
+                })
+            else
+                mp.command_native({
+                    name = "subprocess",
+                    args = {"mv", "-f", tmp_path, history_path},
+                    playback_only = false,
+                })
+            end
+        end
     end
 
     storage.append_count = 0
@@ -1816,10 +1854,11 @@ local function resolve_kick_cdn(url)
     if not slug then return false end
 
     active_kick_urls[url] = true
+    local curl_bin = find_executable("curl") or "curl"
     local api_url = string.format("https://kick.com/api/v2/channels/%s/videos", slug)
     mp.command_native_async({
         name = "subprocess",
-        args = {"curl", "-s", "-H", "User-Agent: Mozilla/5.0", api_url},
+        args = {curl_bin, "-s", "-H", "User-Agent: Mozilla/5.0", api_url},
         playback_only = false,
         capture_stdout = true,
         capture_stderr = false,
