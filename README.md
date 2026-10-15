@@ -33,6 +33,7 @@ The name mirrors what the script does:
 - **Unified keyboard navigation**: Both uosc and vanilla menus support arrow-key pagination (`←` / `→` or `h` / `l`), delete (`Del`), prune (`p`), clear (`c`), and restart (`r`).
 - **Folder blacklist**: Exclude specific directories (downloads, temp folders, etc.) from history tracking via `ignore_paths`.
 - **Universal stream & URL metadata**: Formats online streams and video URLs (YouTube, Twitch, Kick, Rumble, and direct media links) as `Author/Creator: Video Title (YYYY-MM-DD)` for mpv OSD and playback history. Universal resolver canonicalizes raw CDN links and queries metadata asynchronously via yt-dlp and platform APIs in the background without interrupting playback.
+- **Graceful shutdown hook**: Automatically commits playback position on player quit or shutdown even if mpv exits abruptly.
 
 ---
 

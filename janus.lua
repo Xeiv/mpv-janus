@@ -2109,6 +2109,12 @@ mp.register_event("end-file", function()
     tracker.current.formatted_title = nil
 end)
 
+mp.register_event("shutdown", function()
+    if tracker.current.qualified then
+        tracker_save()
+    end
+end)
+
 tracker.timer = mp.add_periodic_timer(1, tracker_on_tick)
 
 
