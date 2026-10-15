@@ -33,6 +33,7 @@ The name mirrors what the script does:
 - **Unified keyboard navigation**: Both uosc and vanilla menus support arrow-key pagination (`←` / `→` or `h` / `l`), delete (`Del`), prune (`p`), clear (`c`), and restart (`r`).
 - **Folder blacklist**: Exclude specific directories (downloads, temp folders, etc.) from history tracking via `ignore_paths`.
 - **Universal stream & URL metadata**: Formats online streams and video URLs (YouTube, Twitch, Kick, Rumble, and direct media links) as `Author/Creator: Video Title (YYYY-MM-DD)` for mpv OSD and playback history. Universal resolver canonicalizes raw CDN links and queries metadata asynchronously via yt-dlp and platform APIs in the background without interrupting playback.
+- **Instant discard (`Alt+d` / `Alt+DEL`)**: Remove the currently playing video from history immediately and disable tracking for the remainder of the session without interrupting playback.
 - **Graceful shutdown hook**: Automatically commits playback position on player quit or shutdown even if mpv exits abruptly.
 
 ---
@@ -74,6 +75,7 @@ cp janus.conf ~/.config/mpv/script-opts/
 | :--- | :--- | :--- |
 | **`h`** | `janus/open` | Open history menu (auto-detects uosc or vanilla OSD) |
 | **`Alt+h`** | `janus/toggle-tracking` | Toggle history tracking on / off |
+| **`Alt+d`** / **`Alt+DEL`** | `janus/forget-current` | Remove current file from history and stop tracking it |
 | **`Ctrl+z`** | `janus/seek-undo` | Undo seek (jump back to previous position) |
 | **`Ctrl+x`** | `janus/seek-redo` | Redo seek |
 | **`Space`** | `janus/speed-hold` | Tap to play/pause (or resume last video when idle), hold for 2x speed |
@@ -93,6 +95,9 @@ h               script-binding janus/open                       #! History > Pla
 
 # Toggle history recording
 Alt+h           script-binding janus/toggle-tracking            #! History > Toggle History
+
+# Forget current file (remove from history and stop tracking this session)
+Alt+d           script-binding janus/forget-current             #! History > Forget Current File
 
 # Seek undo and redo
 ctrl+z          script-binding janus/seek-undo

@@ -864,6 +864,7 @@ local tracker = {
         watch_time = 0,
         qualified = false,
         formatted_title = nil,
+        ignored = false,
     },
     timer = nil,
     is_paused = false,
@@ -962,7 +963,7 @@ local function play_last_played()
 end
 
 local function tracker_save()
-    if not tracking_enabled or resume_prompter.is_active or not tracker.current.path or not tracker.current.qualified or should_ignore_path(tracker.current.path) then
+    if not tracking_enabled or resume_prompter.is_active or not tracker.current.path or not tracker.current.qualified or tracker.current.ignored or should_ignore_path(tracker.current.path) then
         return
     end
 
@@ -988,7 +989,7 @@ local function tracker_save()
 end
 
 local function tracker_on_tick()
-    if not tracking_enabled or resume_prompter.is_active or tracker.is_paused or not tracker.current.path or should_ignore_path(tracker.current.path) then
+    if not tracking_enabled or resume_prompter.is_active or tracker.is_paused or not tracker.current.path or tracker.current.ignored or should_ignore_path(tracker.current.path) then
         return
     end
 
@@ -2045,6 +2046,7 @@ mp.register_event("file-loaded", function()
         watch_time = 0,
         qualified = false,
         formatted_title = nil,
+        ignored = false,
     }
 
     tracker.is_paused = mp.get_property_bool("pause", false)
@@ -2099,7 +2101,7 @@ mp.register_event("end-file", function()
         speed_deactivate()
     end
     resume_prompter.cancel()
-    if tracker.current.qualified then
+    if tracker.current.qualified and not tracker.current.ignored then
         tracker_save()
     end
     mp.set_property("force-media-title", "")
@@ -2107,10 +2109,11 @@ mp.register_event("end-file", function()
     tracker.current.qualified = false
     tracker.current.watch_time = 0
     tracker.current.formatted_title = nil
+    tracker.current.ignored = false
 end)
 
 mp.register_event("shutdown", function()
-    if tracker.current.qualified then
+    if tracker.current.qualified and not tracker.current.ignored then
         tracker_save()
     end
 end)
@@ -2375,12 +2378,40 @@ mp.observe_property("time-pos", "number", function(_, pos)
 end)
 
 
+local function forget_current()
+    local path = tracker.current.path or mp.get_property("path")
+    if not path or path == "" then
+        mp.osd_message("Janus: No active file to remove", 2)
+        return
+    end
+
+    tracker.current.ignored = true
+    tracker.current.qualified = false
+
+    if resume_prompter.is_active then
+        resume_prompter.cancel()
+    end
+
+    storage.remove(path)
+    mp.osd_message("Janus: Current file removed from history", 2)
+    msg.info("Janus: Removed current file from history: " .. path)
+
+    if vanilla_menu.is_open then
+        vanilla_refresh()
+    elseif ui.has_uosc and uosc_menu.current_page then
+        uosc_menu.update(uosc_menu.current_page or 1)
+    end
+end
+
+
 -- default keybindings
 -- ============================================================================
 -- Keybindings & Script Messages
 -- ============================================================================
 mp.add_key_binding("h", "open", function() ui.open() end)
 mp.add_key_binding("Alt+h", "toggle-tracking", toggle_tracking)
+mp.add_key_binding("Alt+d", "forget-current", forget_current)
+mp.add_key_binding("Alt+DEL", "forget-current-del", forget_current)
 if config.speed_enabled then
     mp.add_forced_key_binding("SPACE", "speed-hold-space", handle_speed_key, {complex = true})
     mp.add_forced_key_binding("MBTN_RIGHT", "speed-hold-mouse", handle_speed_key, {complex = true})
@@ -2611,6 +2642,9 @@ mp.register_script_message("copy-path", function(path)
         copy_to_clipboard(path)
     end
 end)
+
+mp.register_script_message("forget-current", forget_current)
+mp.register_script_message("forget", forget_current)
 
 mp.register_script_message("delete", function(path)
     if path and path ~= "" then
