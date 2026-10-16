@@ -601,10 +601,11 @@ function storage.get_page(page, page_size)
 
     local items = {}
     local seen = {}
+    local item_by_path = {}
     local unique_count = 0
     local has_next = false
 
-    reverse_scan_lines(8192, function(line)
+    reverse_scan_lines(nil, function(line)
         local ok_json, entry = pcall(utils.parse_json, line)
         if ok_json and type(entry) == "table" and entry.path then
             if not seen[entry.path] then
@@ -613,9 +614,26 @@ function storage.get_page(page, page_size)
                     unique_count = unique_count + 1
                     if unique_count >= start_idx and unique_count <= end_idx then
                         table.insert(items, entry)
+                        item_by_path[entry.path] = entry
                     elseif unique_count > end_idx then
                         has_next = true
-                        return true
+                        local needs_title = false
+                        for _, it in ipairs(items) do
+                            if not it.title or is_generic_title(it.title) or is_url(it.title) then
+                                needs_title = true
+                                break
+                            end
+                        end
+                        if not needs_title then
+                            return true
+                        end
+                    end
+                end
+            else
+                local current_item = item_by_path[entry.path]
+                if current_item and (not current_item.title or is_generic_title(current_item.title) or is_url(current_item.title)) then
+                    if entry.title and entry.title ~= "" and not is_generic_title(entry.title) and not is_url(entry.title) then
+                        current_item.title = entry.title
                     end
                 end
             end
@@ -633,19 +651,38 @@ end
 
 function storage.get_entry(target_path)
     if not target_path or target_path == "" then return nil end
-    local result = nil
+    local latest = nil
+    local best_title = nil
 
-    reverse_scan_lines(8192, function(line)
+    reverse_scan_lines(nil, function(line)
         local ok_json, entry = pcall(utils.parse_json, line)
-        if ok_json and type(entry) == "table" and entry.path == target_path then
+        if ok_json and type(entry) == "table" and is_same_path(entry.path, target_path) then
             if not entry.deleted then
-                result = entry
+                if not latest then
+                    latest = entry
+                    if latest.title and latest.title ~= "" and not is_url(latest.title) and not is_generic_title(latest.title) then
+                        best_title = latest.title
+                        return true
+                    end
+                else
+                    if entry.title and entry.title ~= "" and not is_url(entry.title) and not is_generic_title(entry.title) then
+                        best_title = entry.title
+                        return true
+                    end
+                end
+            else
+                if not latest then return true end
             end
-            return true
         end
     end)
 
-    return result
+    if latest then
+        if best_title then
+            latest.title = best_title
+        end
+        return latest
+    end
+    return nil
 end
 
 function storage.remove(target_path)
@@ -671,16 +708,25 @@ end
 function storage.compact()
     local entries = {}
     local seen = {}
+    local entry_by_path = {}
 
-    reverse_scan_lines(8192, function(line)
+    reverse_scan_lines(nil, function(line)
         local ok_json, entry = pcall(utils.parse_json, line)
         if ok_json and type(entry) == "table" and entry.path then
             if not seen[entry.path] then
                 seen[entry.path] = true
                 if not entry.deleted then
                     table.insert(entries, entry)
+                    entry_by_path[entry.path] = entry
                     if #entries >= config.max_history then
                         return true
+                    end
+                end
+            else
+                local existing = entry_by_path[entry.path]
+                if existing and (not existing.title or is_generic_title(existing.title) or is_url(existing.title)) then
+                    if entry.title and entry.title ~= "" and not is_generic_title(entry.title) and not is_url(entry.title) then
+                        existing.title = entry.title
                     end
                 end
             end
@@ -751,7 +797,7 @@ function storage.prune_missing()
     local seen = {}
     local pruned_count = 0
 
-    reverse_scan_lines(8192, function(line)
+    reverse_scan_lines(nil, function(line)
         local ok_json, entry = pcall(utils.parse_json, line)
         if ok_json and type(entry) == "table" and entry.path then
             if not seen[entry.path] then
@@ -823,7 +869,7 @@ function storage.search(query, max_results)
     local items = {}
     local seen = {}
 
-    reverse_scan_lines(8192, function(line)
+    reverse_scan_lines(nil, function(line)
         local ok_json, entry = pcall(utils.parse_json, line)
         if ok_json and type(entry) == "table" and entry.path then
             if not seen[entry.path] then
@@ -972,7 +1018,20 @@ local function tracker_save()
     tracker.current.duration = mp.get_property_number("duration", tracker.current.duration) or tracker.current.duration
     local title
     if is_url(tracker.current.path) then
-        title = tracker.current.formatted_title or mp.get_property("media-title")
+        title = tracker.current.formatted_title
+        if not title or title == "" or is_generic_title(title) or is_url(title) then
+            local raw = mp.get_property("media-title")
+            if raw and raw ~= "" and not is_generic_title(raw) and not is_url(raw) then
+                title = raw
+            else
+                local win_title = mp.get_property("title")
+                if win_title and win_title ~= "" and not is_generic_title(win_title) and not is_url(win_title) then
+                    title = win_title
+                elseif tracker.current.title and not is_generic_title(tracker.current.title) and not is_url(tracker.current.title) then
+                    title = tracker.current.title
+                end
+            end
+        end
     else
         title = tracker.current.title or get_filename(tracker.current.path)
     end
@@ -1803,8 +1862,11 @@ local function try_format_from_mpv_metadata(path)
 
     if not title or title == "" or is_url(title) or is_generic_title(title) then
         local raw_title = mp.get_property("media-title")
+        local win_title = mp.get_property("title")
         if raw_title and raw_title ~= "" and not is_url(raw_title) and not is_generic_title(raw_title) then
             title = raw_title
+        elseif win_title and win_title ~= "" and not is_url(win_title) and not is_generic_title(win_title) then
+            title = win_title
         elseif tracker.current.title and not is_url(tracker.current.title) and not is_generic_title(tracker.current.title) then
             title = tracker.current.title
         else
@@ -1838,7 +1900,7 @@ local function resolve_kick_cdn(url)
 
     local slug = kick_channel_cache[channel_ivs]
     if not slug then
-        reverse_scan_lines(8192, function(line)
+        reverse_scan_lines(nil, function(line)
             local ok_json, entry = pcall(utils.parse_json, line)
             if ok_json and type(entry) == "table" and entry.path and entry.title then
                 if entry.path:find(channel_ivs, 1, true) then
@@ -2006,7 +2068,13 @@ end
 -- ============================================================================
 
 mp.register_event("start-file", function()
-    mp.set_property("force-media-title", "")
+    local existing = mp.get_property("force-media-title")
+    if existing and existing ~= "" and not is_generic_title(existing) and not is_url(existing) then
+        tracker.current.title = existing
+        tracker.current.formatted_title = existing
+    else
+        mp.set_property("force-media-title", "")
+    end
 end)
 
 mp.register_event("file-loaded", function()
@@ -2023,6 +2091,7 @@ mp.register_event("file-loaded", function()
     end
 
     local raw_title = mp.get_property("media-title")
+    local win_title = mp.get_property("title")
     local duration = mp.get_property_number("duration", 0) or 0
     local pos = mp.get_property_number("time-pos", 0) or 0
 
@@ -2030,9 +2099,11 @@ mp.register_event("file-loaded", function()
 
     local title = raw_title
     if not title or title == "" or is_url(title) or is_generic_title(title) then
-        if not is_url(path) and entry and entry.title and entry.title ~= "" and not is_generic_title(entry.title) then
+        if entry and entry.title and entry.title ~= "" and not is_url(entry.title) and not is_generic_title(entry.title) then
             title = entry.title
-        elseif raw_title and raw_title ~= "" and not is_url(raw_title) then
+        elseif win_title and win_title ~= "" and not is_url(win_title) and not is_generic_title(win_title) then
+            title = win_title
+        elseif raw_title and raw_title ~= "" and not is_url(raw_title) and not is_generic_title(raw_title) then
             title = raw_title
         else
             title = is_url(path) and clean_url_title(path) or get_filename(path)
@@ -2049,6 +2120,11 @@ mp.register_event("file-loaded", function()
         formatted_title = nil,
         ignored = false,
     }
+
+    if is_url(path) and title and title ~= "" and not is_url(title) and not is_generic_title(title) then
+        tracker.current.formatted_title = title
+        mp.set_property("force-media-title", title)
+    end
 
     tracker.is_paused = mp.get_property_bool("pause", false)
 
