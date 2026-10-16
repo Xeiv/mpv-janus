@@ -15,6 +15,7 @@ local mp = require("mp")
 local msg = require("mp.msg")
 local opt = require("mp.options")
 local utils = require("mp.utils")
+local assdraw = require("mp.assdraw")
 
 
 -- ============================================================================
@@ -2130,9 +2131,89 @@ speed_state = {
     normal_speed = 1.0,
     timer = nil,
     orig_pitch_correction = nil,
+    overlay = nil,
+    fade_timer = nil,
 }
 
 local is_speed_toggled = false
+
+local function speed_show_overlay(text)
+    if not speed_state.overlay then
+        speed_state.overlay = mp.create_osd_overlay("ass-events")
+    end
+    if speed_state.fade_timer then
+        speed_state.fade_timer:kill()
+        speed_state.fade_timer = nil
+    end
+
+    local d_width = mp.get_property_number("osd-width", 1280) or 1280
+    local d_height = mp.get_property_number("osd-height", 720) or 720
+    if d_width <= 0 or d_height <= 0 then
+        d_width, d_height = 1280, 720
+    end
+
+    local center_x = math.floor(d_width / 2)
+    local font_size = math.max(15, math.floor(d_height * 0.032))
+    local center_y = math.max(22, math.floor(d_height * 0.045)) + math.floor(font_size / 2)
+
+    local formatted_text = string.format("{\\fs%d\\c&HFFFFFF&\\b0}%s", font_size, text)
+
+    speed_state.overlay.res_x = d_width
+    speed_state.overlay.res_y = d_height
+    speed_state.overlay.compute_bounds = true
+    speed_state.overlay.data = string.format("{\\an5\\pos(%d, %d)\\bord0\\shad0}%s", center_x, center_y, formatted_text)
+    local bounds = speed_state.overlay:update()
+
+    local pad_x = math.max(16, math.floor(font_size * 0.75))
+    local pill_half_height = math.floor(font_size * 0.85)
+
+    local x0, x1
+    if bounds and bounds.x0 and bounds.x1 then
+        x0 = bounds.x0 - pad_x
+        x1 = bounds.x1 + pad_x
+    else
+        local est_half_w = math.floor(#text * font_size * 0.35) + pad_x
+        x0 = center_x - est_half_w
+        x1 = center_x + est_half_w
+    end
+
+    local y0 = center_y - pill_half_height
+    local y1 = center_y + pill_half_height
+    local radius = pill_half_height
+
+    local ass = assdraw.ass_new()
+    ass:new_event()
+    ass:append("{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H000000&\\1a&H50&}")
+    ass:draw_start()
+    ass:round_rect_cw(x0, y0, x1, y1, radius)
+    ass:draw_stop()
+
+    ass:new_event()
+    ass:append(string.format("{\\an5\\pos(%d, %d)\\bord0\\shad0\\fs%d\\b0\\1c&HFFFFFF&\\1a&H00&}%s", center_x, center_y, font_size, text))
+
+    speed_state.overlay.compute_bounds = false
+    speed_state.overlay.data = ass.text
+    speed_state.overlay:update()
+end
+
+local function speed_hide_overlay(delay)
+    if speed_state.fade_timer then
+        speed_state.fade_timer:kill()
+        speed_state.fade_timer = nil
+    end
+    if delay and delay > 0 then
+        speed_state.fade_timer = mp.add_timeout(delay, function()
+            if speed_state.overlay then
+                speed_state.overlay:remove()
+            end
+            speed_state.fade_timer = nil
+        end)
+    else
+        if speed_state.overlay then
+            speed_state.overlay:remove()
+        end
+    end
+end
 
 local function speed_activate(is_toggle)
     speed_state.is_speeding = true
@@ -2151,10 +2232,10 @@ local function speed_activate(is_toggle)
 
     mp.set_property("speed", config.speed_target)
     if is_toggle then
-        mp.osd_message(string.format("⏩ %.1fx Speed (Toggled)", config.speed_target), 99999)
+        speed_show_overlay(string.format("⏩ %.1fx Speed (Toggled)", config.speed_target))
         is_speed_toggled = true
     else
-        mp.osd_message(string.format("⏩ %.1fx Speed", config.speed_target), 99999)
+        speed_show_overlay(string.format("⏩ %.1fx Speed", config.speed_target))
     end
 end
 
@@ -2172,8 +2253,10 @@ speed_deactivate = function()
         if speed_state.was_paused then
             mp.set_property_native("pause", true)
         end
-        mp.osd_message("▶️ Normal Speed", 1)
+        speed_hide_overlay(0)
         speed_state.is_speeding = false
+    else
+        speed_hide_overlay(0)
     end
     is_speed_toggled = false
 end
