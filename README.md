@@ -25,7 +25,7 @@ The name mirrors what the script does:
 - **Completion cutoff (95%)**: If you stop near the end of a video (past 95% or within the last 15 seconds), Janus treats it as completed and starts from `00:00` next time without prompting.
 - **Resume from idle**: Press `Space` in an empty mpv window to immediately load and resume your last watched video.
 - **Seek undo & redo (`Ctrl+Z` / `Ctrl+X`)**: Revert accidental timeline seeks or chapter jumps with jump delta and destination feedback (e.g. `↩ -0:45 (to 14:20)`). Rapid seeks within 1 second are grouped so one press reverts the entire sequence.
-- **Hold to speed up (2.0x)**: Press and hold `Space` or `Right-Click` to temporarily play at 2x speed. Release to return to 1x. Quick taps play or pause as normal. Toggle 2x anytime with `Alt+n`.
+- **Hold to speed up (2.0x)**: Press and hold `Space` or `Right-Click` to temporarily play at 2x speed with a YouTube-style top-center pill overlay (`2x ⏩`). Release to return to 1x. Quick taps play or pause as normal. Toggle 2x anytime with `Alt+n` (keeps 2x active when pausing/unpausing with space).
 - **Now playing indicator**: Highlights and marks the currently active video in both uosc and vanilla history menus.
 - **Missing file detection**: Videos that were moved, deleted, or located on disconnected drives are marked with `[Deleted or Moved]`.
 - **Prune & clear**: Remove all dead/missing files from history with **Prune Missing Files** (`p`), or wipe history completely with **Clear All History** (`c`). Both require confirmation.
@@ -33,8 +33,8 @@ The name mirrors what the script does:
 - **Unified keyboard navigation**: Both uosc and vanilla menus support arrow-key pagination (`←` / `→` or `h` / `l`), delete (`Del`), prune (`p`), clear (`c`), and restart (`r`).
 - **Folder blacklist**: Exclude specific directories (downloads, temp folders, etc.) from history tracking via `ignore_paths`.
 - **Universal stream & URL metadata**: Formats online streams and video URLs (YouTube, Twitch, Kick, Rumble, and direct media links) as `Author/Creator: Video Title (YYYY-MM-DD)` for mpv OSD and playback history. Universal resolver canonicalizes raw CDN links and queries metadata asynchronously via yt-dlp and platform APIs in the background without interrupting playback.
-- **Instant discard (`Alt+d` / `Alt+DEL`)**: Remove the currently playing video from history immediately and disable tracking for the remainder of the session without interrupting playback.
-- **Graceful shutdown hook**: Automatically commits playback position on player quit or shutdown even if mpv exits abruptly.
+- **Instant discard (`Alt+d` / `Alt+DEL`)**: Remove the currently playing video from history immediately and stop tracking it for the rest of the session without interrupting playback.
+- **Save on exit**: Automatically saves playback position when mpv exits or shuts down so progress is never lost.
 
 ---
 
@@ -80,7 +80,7 @@ cp janus.conf ~/.config/mpv/script-opts/
 | **`Ctrl+x`** | `janus/seek-redo` | Redo seek |
 | **`Space`** | `janus/speed-hold` | Tap to play/pause (or resume last video when idle), hold for 2x speed |
 | **`Right Click`** | `janus/speed-hold` | Tap to play/pause, hold for 2x speed |
-| **`Alt+n`** | `janus/speed-toggle` | Toggle 2x speed on / off |
+| **`Alt+n`** | `janus/speed-toggle` | Toggle 2x speed on / off (persists across pause) |
 | **`Ctrl+r`** | `janus/play-last` | Resume most recently played video |
 | **`H`** | `janus/history-vanilla` | Force open vanilla OSD menu |
 | **`Ctrl+h`** | `janus/history-uosc` | Force open uosc menu |
@@ -110,7 +110,7 @@ MBTN_RIGHT      script-binding janus/speed-hold
 # Resume last played video
 ctrl+r          script-binding janus/play-last
 
-# Toggle 2x speed
+# Toggle 2x speed (persists across pause)
 Alt+n           script-binding janus/speed-toggle
 
 # Open specific menu styles directly
