@@ -2246,25 +2246,28 @@ local function speed_show_overlay(text)
     speed_state.measure_overlay.data = string.format("{\\an5\\pos(%d, %d)\\bord0\\shad0}%s", center_x, center_y, formatted_text)
     local bounds = speed_state.measure_overlay:update()
 
-    local pad_x = math.max(16, math.floor(font_size * 0.75))
-    local pill_half_height = math.floor(font_size * 0.75)
+    local v_offset_y = -math.floor(font_size * 0.05 + 0.5)
+    local v_offset_x = -math.floor(font_size * 0.035 + 0.5)
 
-    local text_cx
-    local x0, x1
+    local text_cx = center_x + v_offset_x
+    local text_cy = center_y + v_offset_y
+
+    local text_half_w
     if bounds and bounds.x0 and bounds.x1 then
-        text_cx = (bounds.x0 + bounds.x1) / 2
-        x0 = bounds.x0 - pad_x
-        x1 = bounds.x1 + pad_x
+        text_half_w = (bounds.x1 - bounds.x0) / 2 + v_offset_x
     else
-        text_cx = center_x
-        local est_half_w = math.floor(#text * font_size * 0.35) + pad_x
-        x0 = center_x - est_half_w
-        x1 = center_x + est_half_w
+        text_half_w = math.floor(#text * font_size * 0.35)
     end
+    local text_half_h = math.floor(font_size * 0.25)
 
-    local y0 = center_y - pill_half_height
-    local y1 = center_y + pill_half_height
-    local radius = pill_half_height
+    local pad_x = math.max(16, math.floor(font_size * 0.70))
+    local pad_y = math.max(6, math.floor(font_size * 0.32))
+
+    local x0 = math.floor(text_cx - text_half_w - pad_x)
+    local x1 = math.floor(text_cx + text_half_w + pad_x)
+    local y0 = math.floor(text_cy - text_half_h - pad_y)
+    local y1 = math.floor(text_cy + text_half_h + pad_y)
+    local radius = (y1 - y0) / 2
 
     local ass = assdraw.ass_new()
     ass:new_event()
@@ -2274,7 +2277,7 @@ local function speed_show_overlay(text)
     ass:draw_stop()
 
     ass:new_event()
-    ass:append(string.format("{\\an5\\pos(%.1f, %d)\\bord0\\shad0\\1a&H00&}%s", text_cx, center_y, formatted_text))
+    ass:append(string.format("{\\an5\\pos(%d, %d)\\bord0\\shad0\\1a&H00&}%s", center_x, center_y, formatted_text))
 
     speed_state.overlay.res_x = d_width
     speed_state.overlay.res_y = d_height
