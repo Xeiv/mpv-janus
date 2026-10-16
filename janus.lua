@@ -2171,13 +2171,16 @@ local function speed_show_overlay(text)
     local bounds = speed_state.measure_overlay:update()
 
     local pad_x = math.max(16, math.floor(font_size * 0.75))
-    local pill_half_height = math.floor(font_size * 0.85)
+    local pill_half_height = math.floor(font_size * 0.75)
 
+    local text_cx
     local x0, x1
     if bounds and bounds.x0 and bounds.x1 then
+        text_cx = (bounds.x0 + bounds.x1) / 2
         x0 = bounds.x0 - pad_x
         x1 = bounds.x1 + pad_x
     else
+        text_cx = center_x
         local est_half_w = math.floor(#text * font_size * 0.35) + pad_x
         x0 = center_x - est_half_w
         x1 = center_x + est_half_w
@@ -2189,13 +2192,13 @@ local function speed_show_overlay(text)
 
     local ass = assdraw.ass_new()
     ass:new_event()
-    ass:append("{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H000000&\\1a&H50&}")
+    ass:append("{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H000000&\\1a&H75&}")
     ass:draw_start()
     ass:round_rect_cw(x0, y0, x1, y1, radius)
     ass:draw_stop()
 
     ass:new_event()
-    ass:append(string.format("{\\an5\\pos(%d, %d)\\bord0\\shad0\\fs%d\\b0\\1c&HFFFFFF&\\1a&H00&}%s", center_x, center_y, font_size, text))
+    ass:append(string.format("{\\an5\\pos(%.1f, %d)\\bord0\\shad0\\1a&H00&}%s", text_cx, center_y, formatted_text))
 
     speed_state.overlay.res_x = d_width
     speed_state.overlay.res_y = d_height
@@ -2238,11 +2241,12 @@ local function speed_activate(is_toggle)
     end
 
     mp.set_property("speed", config.speed_target)
+    local spd_str = (config.speed_target % 1 == 0) and string.format("%dx", math.floor(config.speed_target)) or string.format("%.1fx", config.speed_target)
     if is_toggle then
-        speed_show_overlay(string.format("⏩ %.1fx Speed (Toggled)", config.speed_target))
+        speed_show_overlay(string.format("Toggled %s ⏩", spd_str))
         is_speed_toggled = true
     else
-        speed_show_overlay(string.format("⏩ %.1fx Speed", config.speed_target))
+        speed_show_overlay(string.format("%s ⏩", spd_str))
     end
 end
 
@@ -2300,7 +2304,11 @@ local function handle_speed_key(event)
             speed_state.timer = nil
         end
 
-        if speed_state.is_speeding then
+        if is_speed_toggled then
+            -- speed is toggled: quick tap pauses or unpauses without canceling the toggle
+            local paused = mp.get_property_native("pause")
+            mp.set_property_native("pause", not paused)
+        elseif speed_state.is_speeding then
             speed_deactivate()
         else
             -- quick tap: toggle play/pause
