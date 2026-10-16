@@ -2132,6 +2132,7 @@ speed_state = {
     timer = nil,
     orig_pitch_correction = nil,
     overlay = nil,
+    measure_overlay = nil,
     fade_timer = nil,
 }
 
@@ -2140,6 +2141,11 @@ local is_speed_toggled = false
 local function speed_show_overlay(text)
     if not speed_state.overlay then
         speed_state.overlay = mp.create_osd_overlay("ass-events")
+    end
+    if not speed_state.measure_overlay then
+        speed_state.measure_overlay = mp.create_osd_overlay("ass-events")
+        speed_state.measure_overlay.compute_bounds = true
+        speed_state.measure_overlay.hidden = true
     end
     if speed_state.fade_timer then
         speed_state.fade_timer:kill()
@@ -2158,11 +2164,11 @@ local function speed_show_overlay(text)
 
     local formatted_text = string.format("{\\fs%d\\c&HFFFFFF&\\b0}%s", font_size, text)
 
-    speed_state.overlay.res_x = d_width
-    speed_state.overlay.res_y = d_height
-    speed_state.overlay.compute_bounds = true
-    speed_state.overlay.data = string.format("{\\an5\\pos(%d, %d)\\bord0\\shad0}%s", center_x, center_y, formatted_text)
-    local bounds = speed_state.overlay:update()
+    -- Measure bounds invisibly using hidden measuring overlay
+    speed_state.measure_overlay.res_x = d_width
+    speed_state.measure_overlay.res_y = d_height
+    speed_state.measure_overlay.data = string.format("{\\an5\\pos(%d, %d)\\bord0\\shad0}%s", center_x, center_y, formatted_text)
+    local bounds = speed_state.measure_overlay:update()
 
     local pad_x = math.max(16, math.floor(font_size * 0.75))
     local pill_half_height = math.floor(font_size * 0.85)
@@ -2191,7 +2197,8 @@ local function speed_show_overlay(text)
     ass:new_event()
     ass:append(string.format("{\\an5\\pos(%d, %d)\\bord0\\shad0\\fs%d\\b0\\1c&HFFFFFF&\\1a&H00&}%s", center_x, center_y, font_size, text))
 
-    speed_state.overlay.compute_bounds = false
+    speed_state.overlay.res_x = d_width
+    speed_state.overlay.res_y = d_height
     speed_state.overlay.data = ass.text
     speed_state.overlay:update()
 end
