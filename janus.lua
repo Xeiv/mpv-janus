@@ -248,7 +248,10 @@ local function format_media_title(author, title, date)
     end
 
     if formatted_date and title then
-        if title:find("%(" .. formatted_date:gsub("%p", "%%%0") .. "%)$") or
+        if title:find("%(%d%d%d%d%-%d%d%-%d%d%)%s*$") or
+           title:find("%[%d%d%d%d%-%d%d%-%d%d%]%s*$") or
+           title:find("%(%d%d%d%d%)%s*$") or
+           title:find("%(" .. formatted_date:gsub("%p", "%%%0") .. "%)$") or
            title:find("%[" .. formatted_date:gsub("%p", "%%%0") .. "%]$") then
             formatted_date = nil
         end
