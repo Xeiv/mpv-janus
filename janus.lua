@@ -150,6 +150,8 @@ local function is_generic_title(title)
     local generic = {
         ["master"] = true,
         ["index"] = true,
+        ["index-dvr"] = true,
+        ["index-muted"] = true,
         ["playlist"] = true,
         ["manifest"] = true,
         ["live"] = true,
@@ -161,6 +163,7 @@ local function is_generic_title(title)
         ["prog_index"] = true,
         ["unknown"] = true,
     }
+    if clean:find("^index%-") then return true end
     return generic[clean] == true
 end
 
